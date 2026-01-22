@@ -14,11 +14,12 @@ import { ParsedBookmark } from './services/bookmarkService';
 import { analyzeLink } from './services/geminiService';
 import { GoogleGenAI, Type } from "@google/genai";
 import { supabase, db, isSupabaseConfigured } from './services/supabase';
+import { Session, AuthChangeEvent } from '@supabase/supabase-js';
 
 type SortOption = 'date' | 'name' | 'custom';
 
 const App: React.FC = () => {
-  const [session, setSession] = useState<any>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [currentView, setCurrentView] = useState<'dashboard' | 'settings'>('dashboard');
   const [theme, setTheme] = useState<AppTheme>(() => {
@@ -36,10 +37,10 @@ const App: React.FC = () => {
   const [draggedLinkId, setDraggedLinkId] = useState<string | null>(null);
   const [draggedPinnedId, setDraggedPinnedId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-  
+
   const [news, setNews] = useState<NewsItem[]>([]);
   const [isNewsLoading, setIsNewsLoading] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<{type: 'link' | 'category', id: string, name: string} | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ type: 'link' | 'category', id: string, name: string } | null>(null);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, active: false });
 
   const categoryScrollRef = useRef<HTMLDivElement>(null);
@@ -50,7 +51,7 @@ const App: React.FC = () => {
       setIsAuthLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
       setSession(session);
     });
 
@@ -68,9 +69,9 @@ const App: React.FC = () => {
         db.links.fetchAll(),
         db.categories.fetchAll()
       ]);
-      
+
       let mergedCats = [...fetchedCats];
-      
+
       if (session) {
         for (const initCat of INITIAL_CATEGORIES) {
           if (!mergedCats.find(c => c.name.toLowerCase() === initCat.name.toLowerCase())) {
@@ -90,7 +91,7 @@ const App: React.FC = () => {
           }
         });
       }
-      
+
       setCategories(mergedCats);
       setLinks(fetchedLinks);
     } catch (err) {
@@ -124,7 +125,7 @@ const App: React.FC = () => {
       try {
         setNews(JSON.parse(cachedNews) as NewsItem[]);
         return;
-      } catch (e) {}
+      } catch (e) { }
     }
 
     setIsNewsLoading(true);
@@ -158,7 +159,7 @@ const App: React.FC = () => {
         ...item,
         id: `news-${i}-${Date.now()}`
       })) as NewsItem[];
-      
+
       setNews(newsData);
       localStorage.setItem(CACHE_KEY, JSON.stringify(newsData));
       localStorage.setItem(CACHE_TIME_KEY, now.toString());
@@ -183,7 +184,7 @@ const App: React.FC = () => {
     }
 
     let category = categories.find(c => c.name.toLowerCase() === categoryName.toLowerCase());
-    
+
     if (!category) {
       const newCategory: Category = {
         id: `cat-${Date.now()}`,
@@ -192,7 +193,7 @@ const App: React.FC = () => {
         icon: icon || CATEGORY_ICONS[Math.floor(Math.random() * CATEGORY_ICONS.length)],
         user_id: session?.user?.id
       };
-      
+
       try {
         await db.categories.upsert(newCategory);
         setCategories(prev => [...prev, newCategory]);
@@ -274,15 +275,15 @@ const App: React.FC = () => {
   const executeDeleteCategory = async (id: string) => {
     if (activeCategory === id) setActiveCategory(null);
     const uncategorizedId = categories.find(c => c.name === 'Uncategorized')?.id || 'cat-6';
-    
+
     const updatedLinks = links.map(l => l.categoryId === id ? { ...l, categoryId: uncategorizedId } : l);
-    
+
     try {
       await db.categories.delete(id);
       setCategories(prev => prev.filter(c => c.id !== id));
       setLinks(updatedLinks);
       for (const l of updatedLinks.filter(l => l.categoryId === uncategorizedId)) {
-         await db.links.upsert(l);
+        await db.links.upsert(l);
       }
     } catch (e: any) {
       alert(`Failed to delete category: ${e.message}`);
@@ -305,8 +306,8 @@ const App: React.FC = () => {
 
     if (toProcess.length === 0) {
       if (mode === 'replace') {
-         setLinks([]);
-         for (const l of links) await db.links.delete(l.id);
+        setLinks([]);
+        for (const l of links) await db.links.delete(l.id);
       }
       return;
     }
@@ -348,7 +349,7 @@ const App: React.FC = () => {
       try {
         const result = await analyzeLink(b.url, categories.map(c => c.name));
         let targetCategory = categories.find(c => c.name.toLowerCase() === result.categoryName.toLowerCase());
-        
+
         if (!targetCategory) {
           const newCat: Category = {
             id: `cat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -375,7 +376,7 @@ const App: React.FC = () => {
         };
         finalLinks.unshift(newLink);
         await db.links.upsert(newLink);
-        
+
         await new Promise(r => setTimeout(r, 500));
         if (i % 5 === 0 || i === toProcess.length - 1) setLinks([...finalLinks]);
       } catch (err) {
@@ -391,7 +392,7 @@ const App: React.FC = () => {
           user_id: session?.user?.id
         };
         finalLinks.unshift(fallback);
-        await db.links.upsert(fallback).catch(() => {});
+        await db.links.upsert(fallback).catch(() => { });
         setLinks([...finalLinks]);
       }
     }
@@ -504,8 +505,8 @@ const App: React.FC = () => {
   // Fix: Adding explicit generic type to useMemo to ensure filteredLinks is typed correctly
   const filteredLinks = useMemo<Link[]>(() => {
     return sortedLinks.filter(link => {
-      const matchesSearch = link.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            link.url.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = link.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        link.url.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCategory = activeCategory ? link.categoryId === activeCategory : true;
       return matchesSearch && matchesCategory;
     });
@@ -536,10 +537,10 @@ const App: React.FC = () => {
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-[#0c0c0e] flex items-center justify-center">
-         <div className="flex flex-col items-center gap-6">
-            <div className="w-16 h-16 border-4 border-neon-accent/10 border-t-neon-accent rounded-full animate-spin"></div>
-            <span className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500 animate-pulse">Initializing Vault Protocol</span>
-         </div>
+        <div className="flex flex-col items-center gap-6">
+          <div className="w-16 h-16 border-4 border-neon-accent/10 border-t-neon-accent rounded-full animate-spin"></div>
+          <span className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500 animate-pulse">Initializing Vault Protocol</span>
+        </div>
       </div>
     );
   }
@@ -573,8 +574,8 @@ const App: React.FC = () => {
             <span className="font-extrabold text-xl tracking-tighter uppercase">BentoLinks</span>
           </div>
           <div className="hidden lg:flex items-center bg-[#151518] border border-white/[0.04] rounded-full p-1.5 shadow-xl">
-             <button onClick={() => { setActiveCategory(null); setCurrentView('dashboard'); }} className={`px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${currentView === 'dashboard' && !activeCategory ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Vault Hub</button>
-             <button onClick={() => setCurrentView('settings')} className={`px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${currentView === 'settings' ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Configuration</button>
+            <button onClick={() => { setActiveCategory(null); setCurrentView('dashboard'); }} className={`px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${currentView === 'dashboard' && !activeCategory ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Vault Hub</button>
+            <button onClick={() => setCurrentView('settings')} className={`px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${currentView === 'settings' ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Configuration</button>
           </div>
         </div>
 
@@ -583,7 +584,7 @@ const App: React.FC = () => {
             <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-zinc-600 text-[10px] group-focus-within:text-neon-accent"></i>
             <input type="text" placeholder="GLOBAL SEARCH..." className="w-full bg-white/5 border border-white/5 rounded-full py-3 pl-12 pr-5 focus:outline-none focus:ring-1 focus:ring-neon-accent transition-all text-[10px] font-bold uppercase tracking-widest placeholder:text-zinc-600" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
           </div>
-          
+
           <div className="flex items-center gap-4">
             <div className={`px-3 py-1 bg-white/5 border border-emerald-500/30 rounded-full flex items-center gap-2`}>
               <div className={`w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse`}></div>
@@ -594,7 +595,7 @@ const App: React.FC = () => {
             <button onClick={handleLogout} className="w-9 h-9 rounded-full bg-zinc-800 border border-white/10 overflow-hidden cursor-pointer hover:border-red-500 transition-all group relative">
               <img src={`https://ui-avatars.com/api/?name=${session?.user?.email || 'Local'}&background=c1ff00&color=000`} alt="avatar" />
               <div className="absolute inset-0 bg-red-500/80 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
-                 <i className="fa-solid fa-power-off text-xs"></i>
+                <i className="fa-solid fa-power-off text-xs"></i>
               </div>
             </button>
           </div>
@@ -606,11 +607,11 @@ const App: React.FC = () => {
           <>
             <div className="flex flex-col md:flex-row items-end justify-between gap-6">
               <div>
-                 <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">
-                    <div className="w-1.5 h-1.5 bg-neon-accent rounded-full"></div>
-                    Authenticated Protocol: {session.user.email}
-                 </div>
-                 <h1 className="text-6xl font-black tracking-tighter leading-none">Vault Dashboard</h1>
+                <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">
+                  <div className="w-1.5 h-1.5 bg-neon-accent rounded-full"></div>
+                  Authenticated Protocol: {session.user.email}
+                </div>
+                <h1 className="text-6xl font-black tracking-tighter leading-none">Vault Dashboard</h1>
               </div>
               <div className="flex gap-4">
                 <button onClick={() => setIsImportModalOpen(true)} className="bg-[#151518] border border-white/10 text-white px-6 py-4 rounded-[1.5rem] font-black text-xs uppercase tracking-widest hover:bg-white/5 transition-all">Bulk Sync</button>
@@ -621,14 +622,14 @@ const App: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
               <div className="lg:col-span-8 bento-card p-0 flex group overflow-hidden relative shadow-2xl min-h-[400px]">
                 <div className="w-1/2 p-12 flex flex-col justify-between z-10 border-r border-white/5">
-                   <div className="space-y-4">
+                  <div className="space-y-4">
                     <p className="text-zinc-500 text-xs font-black uppercase tracking-[0.2em]">System Pulse</p>
                     <p className="text-7xl font-black text-white leading-none mb-2">{formattedTime}</p>
                     <p className="text-[11px] font-black text-neon-accent uppercase tracking-[0.3em] mb-8">{formattedDate}</p>
                     <div className="flex items-center gap-4 py-3 px-6 bg-white/[0.03] border border-white/[0.05] rounded-2xl">
-                       <div className="flex flex-col"><span className="text-[9px] font-black text-zinc-500 uppercase">Records</span><span className="text-2xl font-black">{stats.total}</span></div>
-                       <div className="w-px h-8 bg-white/10"></div>
-                       <div className="flex flex-col"><span className="text-[9px] font-black text-zinc-500 uppercase">AI Sorted</span><span className="text-2xl font-black text-zinc-400">{stats.ai}</span></div>
+                      <div className="flex flex-col"><span className="text-[9px] font-black text-zinc-500 uppercase">Records</span><span className="text-2xl font-black">{stats.total}</span></div>
+                      <div className="w-px h-8 bg-white/10"></div>
+                      <div className="flex flex-col"><span className="text-[9px] font-black text-zinc-500 uppercase">AI Sorted</span><span className="text-2xl font-black text-zinc-400">{stats.ai}</span></div>
                     </div>
                   </div>
                 </div>
@@ -652,8 +653,8 @@ const App: React.FC = () => {
                 <div className="flex-grow overflow-y-auto pr-2 no-scrollbar grid grid-cols-3 gap-4 content-start">
                   {pinnedLinks.length > 0 ? (
                     pinnedLinks.map(link => (
-                      <div 
-                        key={`pinned-mini-${link.id}`} 
+                      <div
+                        key={`pinned-mini-${link.id}`}
                         draggable
                         onDragStart={() => handlePinnedDragStart(link.id)}
                         onDragOver={(e) => e.preventDefault()}
@@ -661,9 +662,9 @@ const App: React.FC = () => {
                         className="group relative flex flex-col items-center justify-center p-3 bg-white/[0.02] rounded-2xl border border-white/[0.05] hover:bg-white/[0.05] hover:border-white/10 transition-all cursor-grab active:cursor-grabbing text-center min-h-[80px]"
                       >
                         <div className="w-[34px] h-[34px] rounded-xl bg-zinc-900 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 shadow-lg mb-2">
-                          <img 
-                            src={`https://www.google.com/s2/favicons?sz=64&domain=${link.url}`} 
-                            alt="" 
+                          <img
+                            src={`https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
+                            alt=""
                             className="w-5 h-5 object-contain"
                             onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=18181b&color=fff`)}
                           />
@@ -671,24 +672,24 @@ const App: React.FC = () => {
                         <p className="text-[9px] font-black text-zinc-400 truncate w-full uppercase tracking-tighter leading-tight">
                           {link.title}
                         </p>
-                        
+
                         {/* Hover Quick Actions */}
                         <div className="absolute -top-1 -right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                           <button 
+                          <button
                             onClick={(e) => { e.stopPropagation(); togglePin(link.id); }}
                             className="w-5 h-5 flex items-center justify-center rounded-full bg-neon-accent/20 text-neon-accent hover:bg-neon-accent hover:text-black border border-neon-accent/10 transition-all"
                             title="Unpin"
-                           >
+                          >
                             <i className="fa-solid fa-xmark text-[7px]"></i>
-                           </button>
-                           <a 
-                            href={link.url} 
-                            target="_blank" 
+                          </button>
+                          <a
+                            href={link.url}
+                            target="_blank"
                             className="w-5 h-5 flex items-center justify-center rounded-full bg-white/10 text-zinc-400 hover:text-white border border-white/10 transition-all"
                             title="Visit"
-                           >
+                          >
                             <i className="fa-solid fa-arrow-up-right-from-square text-[7px]"></i>
-                           </a>
+                          </a>
                         </div>
                       </div>
                     ))
@@ -701,12 +702,12 @@ const App: React.FC = () => {
                     </div>
                   )}
                 </div>
-                
+
                 <div className="mt-6 pt-6 border-t border-white/5">
-                   <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest flex items-center gap-2">
-                     <i className="fa-solid fa-lock text-neon-accent"></i>
-                     Encryption: Cloud Protocol Active
-                   </p>
+                  <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest flex items-center gap-2">
+                    <i className="fa-solid fa-lock text-neon-accent"></i>
+                    Encryption: Cloud Protocol Active
+                  </p>
                 </div>
               </div>
             </div>
@@ -715,14 +716,14 @@ const App: React.FC = () => {
               <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-8 relative group/nav">
                 <div className="relative flex items-center w-full xl:w-auto">
                   {/* Left Arrow */}
-                  <button 
+                  <button
                     onClick={() => scrollCategories('left')}
                     className="absolute -left-4 z-20 w-8 h-8 rounded-full bg-zinc-900/80 border border-white/10 text-white flex items-center justify-center hover:bg-neon-accent hover:text-black transition-all opacity-0 group-hover/nav:opacity-100 shadow-xl"
                   >
                     <i className="fa-solid fa-chevron-left text-[10px]"></i>
                   </button>
 
-                  <div 
+                  <div
                     ref={categoryScrollRef}
                     className="flex items-center bg-[#151518] border border-white/[0.04] rounded-full p-1.5 w-full xl:w-auto overflow-x-auto no-scrollbar shadow-2xl relative"
                   >
@@ -733,7 +734,7 @@ const App: React.FC = () => {
                   </div>
 
                   {/* Right Arrow */}
-                  <button 
+                  <button
                     onClick={() => scrollCategories('right')}
                     className="absolute -right-4 z-20 w-8 h-8 rounded-full bg-zinc-900/80 border border-white/10 text-white flex items-center justify-center hover:bg-neon-accent hover:text-black transition-all opacity-0 group-hover/nav:opacity-100 shadow-xl"
                   >
@@ -776,11 +777,11 @@ const App: React.FC = () => {
                       ))
                     ) : (
                       <div className="col-span-full py-24 text-center space-y-4">
-                         <i className="fa-solid fa-box-open text-4xl text-zinc-800"></i>
-                         <div className="space-y-1">
-                            <p className="text-zinc-500 font-black uppercase tracking-widest text-xs">The vault is empty</p>
-                            <p className="text-zinc-700 text-[10px] font-bold">Start adding resources to sync them to your Supabase project.</p>
-                         </div>
+                        <i className="fa-solid fa-box-open text-4xl text-zinc-800"></i>
+                        <div className="space-y-1">
+                          <p className="text-zinc-500 font-black uppercase tracking-widest text-xs">The vault is empty</p>
+                          <p className="text-zinc-700 text-[10px] font-bold">Start adding resources to sync them to your Supabase project.</p>
+                        </div>
                       </div>
                     )}
                   </div>
