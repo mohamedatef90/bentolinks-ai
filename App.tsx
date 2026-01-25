@@ -653,13 +653,16 @@ const App: React.FC = () => {
                 <div className="flex-grow overflow-y-auto pr-2 no-scrollbar grid grid-cols-3 gap-4 content-start">
                   {pinnedLinks.length > 0 ? (
                     pinnedLinks.map(link => (
-                      <div
+                      <a
                         key={`pinned-mini-${link.id}`}
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         draggable
                         onDragStart={() => handlePinnedDragStart(link.id)}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={() => handlePinnedDrop(link.id)}
-                        className="group relative flex flex-col items-center justify-center p-3 bg-white/[0.02] rounded-2xl border border-white/[0.05] hover:bg-white/[0.05] hover:border-white/10 transition-all cursor-grab active:cursor-grabbing text-center min-h-[80px]"
+                        className="group relative flex flex-col items-center justify-center p-3 bg-white/[0.02] rounded-2xl border border-white/[0.05] hover:bg-white/[0.05] hover:border-white/10 transition-all cursor-pointer text-center min-h-[80px]"
                       >
                         <div className="w-[34px] h-[34px] rounded-xl bg-zinc-900 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 shadow-lg mb-2">
                           <img
@@ -672,26 +675,7 @@ const App: React.FC = () => {
                         <p className="text-[9px] font-black text-zinc-400 truncate w-full uppercase tracking-tighter leading-tight">
                           {link.title}
                         </p>
-
-                        {/* Hover Quick Actions */}
-                        <div className="absolute -top-1 -right-1 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); togglePin(link.id); }}
-                            className="w-5 h-5 flex items-center justify-center rounded-full bg-neon-accent/20 text-neon-accent hover:bg-neon-accent hover:text-black border border-neon-accent/10 transition-all"
-                            title="Unpin"
-                          >
-                            <i className="fa-solid fa-xmark text-[7px]"></i>
-                          </button>
-                          <a
-                            href={link.url}
-                            target="_blank"
-                            className="w-5 h-5 flex items-center justify-center rounded-full bg-white/10 text-zinc-400 hover:text-white border border-white/10 transition-all"
-                            title="Visit"
-                          >
-                            <i className="fa-solid fa-arrow-up-right-from-square text-[7px]"></i>
-                          </a>
-                        </div>
-                      </div>
+                      </a>
                     ))
                   ) : (
                     <div className="col-span-full h-full flex flex-col items-center justify-center text-center p-6 space-y-4 opacity-20">
@@ -703,12 +687,6 @@ const App: React.FC = () => {
                   )}
                 </div>
 
-                <div className="mt-6 pt-6 border-t border-white/5">
-                  <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest flex items-center gap-2">
-                    <i className="fa-solid fa-lock text-neon-accent"></i>
-                    Encryption: Cloud Protocol Active
-                  </p>
-                </div>
               </div>
             </div>
 
