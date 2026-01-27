@@ -23,12 +23,14 @@ const LinkCard: React.FC<LinkCardProps> = ({
   onUpdateLink
 }) => {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
   const domain = new URL(link.url).hostname;
   const isAI = category?.name === 'AI Tools';
 
   const handleAIAnalyze = async () => {
     if (isGenerating) return;
     setIsGenerating(true);
+    setAiError(null);
     try {
       const result = await analyzeLink(link.url, categories.map(c => c.name));
       if (onUpdateLink) {
@@ -37,8 +39,9 @@ const LinkCard: React.FC<LinkCardProps> = ({
           description: result.suggestedDescription || link.description
         });
       }
-    } catch (error) {
-      console.error("AI Refresh failed:", error);
+    } catch (err: any) {
+      console.error("AI Refresh failed:", err);
+      setAiError(err?.message || "AI refresh failed.");
     } finally {
       setIsGenerating(false);
     }
@@ -83,9 +86,12 @@ const LinkCard: React.FC<LinkCardProps> = ({
         </div>
       </div>
 
-      <p className="text-zinc-400 text-xs line-clamp-2 leading-relaxed mb-6 flex-grow">
+      <p className="text-zinc-400 text-xs line-clamp-2 leading-relaxed mb-4 flex-grow">
         {link.description || 'No detailed description found for this resource.'}
       </p>
+      {aiError && (
+        <p className="text-red-400 text-[10px] mb-2 px-1">{aiError}</p>
+      )}
 
       <div className="flex items-center justify-between pt-4 border-t border-white/[0.04]">
         <div className="relative group/cat min-w-0 flex-grow mr-4">

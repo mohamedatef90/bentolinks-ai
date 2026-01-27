@@ -16,19 +16,22 @@ const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories
   const [description, setDescription] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(categories[0]?.name || 'Uncategorized');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const handleAIAnalyze = async () => {
     if (!url) return;
     setIsAnalyzing(true);
+    setError(null);
     try {
       const result = await analyzeLink(url, categories.map(c => c.name));
       setTitle(result.suggestedTitle);
       setDescription(result.suggestedDescription);
       setSelectedCategory(result.categoryName);
-    } catch (error) {
-      console.error("AI Analysis failed", error);
+    } catch (err: any) {
+      console.error("AI Analysis failed", err);
+      setError(err?.message || "AI analysis failed. Please try again.");
     } finally {
       setIsAnalyzing(false);
     }
@@ -86,6 +89,9 @@ const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories
                 Magic
               </button>
             </div>
+            {error && (
+              <p className="text-red-400 text-xs mt-2 px-1">{error}</p>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
