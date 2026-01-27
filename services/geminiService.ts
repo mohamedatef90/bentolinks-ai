@@ -16,7 +16,7 @@ export const analyzeLink = async (
   existingCategories: string[],
   retryCount = 0
 ): Promise<AIAnalysisResult> => {
-  const MAX_RETRIES = 2;
+  const MAX_RETRIES = 3;
   const apiKey = process.env.API_KEY;
 
   if (!apiKey || apiKey === 'your_gemini_api_key_here') {
@@ -30,7 +30,7 @@ export const analyzeLink = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: `Analyze this URL: ${url}.
       Your task is to provide metadata and a hierarchical categorization (Category -> Section).
 
@@ -72,7 +72,7 @@ export const analyzeLink = async (
     if (error?.message?.includes('429') || error?.status === 429 || error?.message?.includes('RESOURCE_EXHAUSTED')) {
       if (retryCount < MAX_RETRIES) {
         console.warn(`Quota exceeded for ${url}. Retrying...`);
-        await sleep(2000 * (retryCount + 1));
+        await sleep(5000 * (retryCount + 1));
         return analyzeLink(url, existingCategories, retryCount + 1);
       }
       throw new AIServiceError('AI rate limit exceeded. Please try again in a moment.', true);

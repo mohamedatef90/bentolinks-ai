@@ -377,7 +377,7 @@ const App: React.FC = () => {
         finalLinks.unshift(newLink);
         await db.links.upsert(newLink);
 
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 7000));
         if (i % 5 === 0 || i === toProcess.length - 1) setLinks([...finalLinks]);
       } catch (err) {
         const fallback = {
