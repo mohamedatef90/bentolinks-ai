@@ -60,11 +60,11 @@ const NewsCarousel = ({ news = [], isLoading }: NewsCarouselProps) => {
             <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Tech Brief</span>
          </div>
          <div className="flex gap-2">
-            <button onClick={prevSlide} className="w-6 h-6 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-colors">
-              <i className="fa-solid fa-chevron-left text-[8px]"></i>
+            <button onClick={prevSlide} className="w-11 h-11 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-gray-700/50 transition-colors text-gray-400 hover:text-[#c1ff00]" aria-label="Previous news item">
+              <i className="fa-solid fa-chevron-left text-[10px]"></i>
             </button>
-            <button onClick={nextSlide} className="w-6 h-6 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-colors">
-              <i className="fa-solid fa-chevron-right text-[8px]"></i>
+            <button onClick={nextSlide} className="w-11 h-11 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-gray-700/50 transition-colors text-gray-400 hover:text-[#c1ff00]" aria-label="Next news item">
+              <i className="fa-solid fa-chevron-right text-[10px]"></i>
             </button>
          </div>
       </div>

@@ -79,7 +79,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
         {/* Category Management */}
         <div className="bento-card p-10 space-y-8">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 text-zinc-500 font-black uppercase tracking-widest text-[10px]">
+            <div className="flex items-center gap-4 text-zinc-500 font-black uppercase tracking-widest text-[10px]">
               <i className="fa-solid fa-folder-tree"></i>
               Manage Segments
             </div>
@@ -97,7 +97,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 className={`flex items-center justify-between p-4 bg-white/5 rounded-2xl border transition-all group cursor-grab active:cursor-grabbing ${draggedIndex === index ? 'opacity-30 border-dashed border-neon-accent' : 'border-white/5 hover:border-white/10 hover:bg-white/[0.08]'} ${editingCatId === cat.id ? 'border-neon-accent/50 bg-white/10' : ''}`}
               >
                 <div className="flex items-center gap-4">
-                  <div className="text-zinc-600 group-hover:text-neon-accent transition-colors">
+                  <div className="text-gray-400 group-hover:text-gray-300 transition-colors">
                     <i className="fa-solid fa-grip-vertical text-[10px]"></i>
                   </div>
                   <div className={`w-8 h-8 rounded-lg ${cat.color} flex items-center justify-center text-zinc-900 shrink-0`}>
@@ -108,7 +108,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <div className="flex items-center gap-1">
                   <button 
                     onClick={() => handleEditClick(cat)}
-                    className="p-2 text-zinc-600 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
+                    className="p-2 text-gray-400 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
                     title="Edit category"
                   >
                     <i className="fa-solid fa-pen-to-square text-xs"></i>
@@ -116,7 +116,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                   {cat.name !== 'Uncategorized' && (
                     <button 
                       onClick={() => onDeleteCategory(cat.id)}
-                      className="p-2 text-zinc-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                      className="p-2 text-gray-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
                       title="Delete category"
                     >
                       <i className="fa-solid fa-trash-can text-xs"></i>
@@ -150,7 +150,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 placeholder="Category Name"
                 className="w-full bg-zinc-900/50 border border-white/5 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:ring-1 focus:ring-neon-accent transition-all font-bold"
               />
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap gap-4">
                 {CATEGORY_COLORS.map(color => (
                   <button
                     key={color}
@@ -166,7 +166,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                     key={icon}
                     type="button"
                     onClick={() => setCatIcon(icon)}
-                    className={`p-3 rounded-xl bg-white/5 hover:bg-white/10 ${catIcon === icon ? 'text-neon-accent bg-white/10' : 'text-zinc-500'} transition-all`}
+                    className={`p-4 rounded-xl bg-white/5 hover:bg-white/10 ${catIcon === icon ? 'text-neon-accent bg-white/10' : 'text-zinc-500'} transition-all`}
                   >
                     <i className={`fa-solid ${icon}`}></i>
                   </button>
@@ -184,7 +184,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* Theme Management */}
         <div className="bento-card p-10 space-y-8">
-          <div className="flex items-center gap-3 text-zinc-500 font-black uppercase tracking-widest text-[10px]">
+          <div className="flex items-center gap-4 text-zinc-500 font-black uppercase tracking-widest text-[10px]">
             <i className="fa-solid fa-wand-magic-sparkles"></i>
             Visual Interface
           </div>

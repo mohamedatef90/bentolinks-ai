@@ -14,5 +14,16 @@ export default defineConfig({
   },
   server: {
     port: 3000
-  }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          supabase: ['@supabase/supabase-js'],
+          ai: ['@google/genai'],
+        },
+      },
+    },
+  },
 });

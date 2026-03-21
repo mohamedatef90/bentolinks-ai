@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Category, Link, AppTheme, NewsItem, UserProfile } from './types';
-import { INITIAL_CATEGORIES, CATEGORY_COLORS, CATEGORY_ICONS } from './constants';
+import { Link, AppTheme } from './types';
+import { CATEGORY_COLORS, CATEGORY_ICONS } from './constants';
 import LinkCard from './components/LinkCard';
 import AddLinkModal from './components/AddLinkModal';
 import ImportModal from './components/ImportModal';
@@ -10,26 +9,35 @@ import SettingsView from './components/SettingsView';
 import DeleteConfirmationModal from './components/DeleteConfirmationModal';
 import NewsCarousel from './components/NewsCarousel';
 import AuthView from './components/AuthView';
+import { ToastContainer, useToast } from './components/Toast';
+import { EmptyState } from './components/EmptyState';
+import { NoLinksIllustration, NoResultsIllustration } from './components/EmptyStateIllustration';
+import { InitialLoading } from './components/InitialLoading';
 import { ParsedBookmark } from './services/bookmarkService';
 import { analyzeLink } from './services/geminiService';
-import { GoogleGenAI, Type } from "@google/genai";
-import { supabase, db, isSupabaseConfigured } from './services/supabase';
-import { Session, AuthChangeEvent } from '@supabase/supabase-js';
+import { supabase, db } from './services/supabase';
+import { useAuth } from './hooks/useAuth';
+import { useLinks } from './hooks/useLinks';
+import { useCategories } from './hooks/useCategories';
+import { useTheme } from './hooks/useTheme';
+import { useNews } from './hooks/useNews';
+import { useDebounce } from './hooks/useDebounce';
 
 type SortOption = 'date' | 'name' | 'custom';
 
 const App: React.FC = () => {
-  const [session, setSession] = useState<Session | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'settings'>('dashboard');
-  const [theme, setTheme] = useState<AppTheme>(() => {
-    const saved = localStorage.getItem('bento-theme');
-    return (saved as AppTheme) || 'default';
-  });
+  // Custom Hooks
+  const { session, isLoading: isAuthLoading } = useAuth();
+  const { links, setLinks, addLink: addLinkHook, updateLink, deleteLink: deleteLinkHook, togglePin, changeCategory } = useLinks(session);
+  const { categories, setCategories, addCategory, updateCategory, deleteCategory: deleteCategoryHook, reorderCategories } = useCategories(session);
+  const { theme, setTheme } = useTheme();
+  const { news, isLoading: isNewsLoading } = useNews();
+  const { toasts, showToast, removeToast } = useToast();
 
-  const [links, setLinks] = useState<Link[]>([]);
-  const [categories, setCategories] = useState<Category[]>(INITIAL_CATEGORIES);
+  // UI State
+  const [currentView, setCurrentView] = useState<'dashboard' | 'settings'>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearch = useDebounce(searchQuery, 300);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('custom');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -37,156 +45,53 @@ const App: React.FC = () => {
   const [draggedLinkId, setDraggedLinkId] = useState<string | null>(null);
   const [draggedPinnedId, setDraggedPinnedId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-
-  const [news, setNews] = useState<NewsItem[]>([]);
-  const [isNewsLoading, setIsNewsLoading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'link' | 'category', id: string, name: string } | null>(null);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, active: false });
 
   const categoryScrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setIsAuthLoading(false);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (isAuthLoading) return;
-    fetchVaultData();
-  }, [session, isAuthLoading]);
-
-  const fetchVaultData = async () => {
-    try {
-      const [fetchedLinks, fetchedCats] = await Promise.all([
-        db.links.fetchAll(),
-        db.categories.fetchAll()
-      ]);
-
-      let mergedCats = [...fetchedCats];
-
-      if (session) {
-        for (const initCat of INITIAL_CATEGORIES) {
-          if (!mergedCats.find(c => c.name.toLowerCase() === initCat.name.toLowerCase())) {
-            const newCat = { ...initCat, user_id: session.user.id };
-            try {
-              await db.categories.upsert(newCat);
-              mergedCats.push(newCat);
-            } catch (e) {
-              console.warn("Failed to sync default category:", initCat.name);
-            }
-          }
-        }
-      } else {
-        INITIAL_CATEGORIES.forEach(initCat => {
-          if (!mergedCats.find(c => c.name.toLowerCase() === initCat.name.toLowerCase())) {
-            mergedCats.push(initCat);
-          }
-        });
-      }
-
-      setCategories(mergedCats);
-      setLinks(fetchedLinks);
-    } catch (err) {
-      console.error("Failed to fetch vault data:", err);
-    }
-  };
-
-  useEffect(() => {
-    localStorage.setItem('bento-theme', theme);
-    document.body.className = `theme-${theme}`;
-  }, [theme]);
-
+  // Time update
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
+  // Keyboard shortcuts
   useEffect(() => {
-    fetchTechNews();
-  }, []);
-
-  const fetchTechNews = async () => {
-    const CACHE_KEY = 'bento-news-cache';
-    const CACHE_TIME_KEY = 'bento-news-timestamp';
-    const CACHE_DURATION = 1000 * 60 * 60;
-    const cachedNews = localStorage.getItem(CACHE_KEY);
-    const cachedTime = localStorage.getItem(CACHE_TIME_KEY);
-    const now = Date.now();
-
-    if (cachedNews && cachedTime && (now - parseInt(cachedTime)) < CACHE_DURATION) {
-      try {
-        setNews(JSON.parse(cachedNews) as NewsItem[]);
-        return;
-      } catch (e) { }
-    }
-
-    setIsNewsLoading(true);
-    try {
-      // Use named parameter for apiKey and rely on process.env.API_KEY directly per guidelines
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: 'Get the 5 most important and recent technology news stories from today. Focus on AI, Software Engineering, and Hardware breakthroughs.',
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                summary: { type: Type.STRING },
-                url: { type: Type.STRING },
-                source: { type: Type.STRING },
-                timestamp: { type: Type.STRING }
-              },
-              required: ["title", "summary", "url", "source", "timestamp"]
-            }
-          }
-        }
-      });
-
-      const newsData = (JSON.parse(response.text || '[]') as any[]).map((item: any, i: number) => ({
-        ...item,
-        id: `news-${i}-${Date.now()}`
-      })) as NewsItem[];
-
-      setNews(newsData);
-      localStorage.setItem(CACHE_KEY, JSON.stringify(newsData));
-      localStorage.setItem(CACHE_TIME_KEY, now.toString());
-    } catch (err: any) {
-      if (cachedNews) {
-        setNews(JSON.parse(cachedNews) as NewsItem[]);
-      } else {
-        setNews([
-          { id: '1', title: 'Intelligence Synthesis Update', summary: 'Global neural network clusters reporting 15% increase in cross-modality reasoning accuracy.', url: 'https://ai.google.dev', source: 'System Intel', timestamp: 'REALTIME' },
-          { id: '2', title: 'Silicon Frontier Expansion', summary: 'New fabrication methods reducing thermal output in high-density compute nodes.', url: 'https://huggingface.co', source: 'Core Tech', timestamp: '1H AGO' }
-        ]);
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // Cmd/Ctrl + K: Add link
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsModalOpen(true);
       }
-    } finally {
-      setIsNewsLoading(false);
-    }
-  };
+      
+      // ESC: Close modal
+      if (e.key === 'Escape' && isModalOpen) {
+        setIsModalOpen(false);
+      }
+      
+      // Cmd/Ctrl + I: Import
+      if ((e.metaKey || e.ctrlKey) && e.key === 'i') {
+        e.preventDefault();
+        setIsImportModalOpen(true);
+      }
+    };
 
-  const addLink = async (url: string, title: string, description: string, categoryName: string, icon?: string, sectionLabel?: string) => {
+    document.addEventListener('keydown', handleKeyPress);
+    return () => document.removeEventListener('keydown', handleKeyPress);
+  }, [isModalOpen]);
+
+  // Add link handler
+  const handleAddLink = async (url: string, title: string, description: string, categoryName: string, icon?: string, sectionLabel?: string) => {
     if (links.some(l => l.url.toLowerCase() === url.toLowerCase())) {
-      alert("This resource is already archived in your vault.");
+      showToast("This resource is already archived in your vault.", 'warning');
       return;
     }
 
     let category = categories.find(c => c.name.toLowerCase() === categoryName.toLowerCase());
 
     if (!category) {
-      const newCategory: Category = {
+      const newCategory = {
         id: `cat-${Date.now()}`,
         name: categoryName,
         color: CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)],
@@ -198,8 +103,9 @@ const App: React.FC = () => {
         await db.categories.upsert(newCategory);
         setCategories(prev => [...prev, newCategory]);
         category = newCategory;
+        showToast(`Category "${categoryName}" created successfully`, 'success');
       } catch (e: any) {
-        alert(`Failed to create category: ${e.message}`);
+        showToast(`Failed to create category: ${e.message}`, 'error');
         return;
       }
     }
@@ -217,88 +123,15 @@ const App: React.FC = () => {
     };
 
     try {
-      await db.links.upsert(newLink);
-      setLinks(prev => [newLink, ...prev]);
+      await addLinkHook(newLink);
       setIsModalOpen(false);
+      showToast(`Link "${title || url}" added successfully`, 'success');
     } catch (err: any) {
-      alert(`Sync Failed: ${err.message}. Please check your database tables.`);
+      showToast(`Sync Failed: ${err.message}. Please check your database tables.`, 'error');
     }
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
-
-  const handleUpdateLink = async (id: string, updates: Partial<Link>) => {
-    setLinks(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
-    const item = links.find(l => l.id === id);
-    if (item) {
-      try {
-        await db.links.upsert({ ...item, ...updates });
-      } catch (e: any) {
-        alert(`Update sync failed: ${e.message}`);
-      }
-    }
-  };
-
-  const handleAddCategory = async (name: string, color: string, icon: string) => {
-    const newCategory: Category = {
-      id: `cat-${Date.now()}`,
-      name,
-      color,
-      icon,
-      user_id: session?.user?.id
-    };
-    try {
-      await db.categories.upsert(newCategory);
-      setCategories(prev => [...prev, newCategory]);
-    } catch (e: any) {
-      alert(e.message);
-    }
-  };
-
-  const handleUpdateCategory = async (id: string, name: string, color: string, icon: string) => {
-    const updated = { id, name, color, icon, user_id: session?.user?.id };
-    try {
-      await db.categories.upsert(updated);
-      setCategories(prev => prev.map(c => c.id === id ? updated : c));
-    } catch (e: any) {
-      alert(e.message);
-    }
-  };
-
-  const confirmDeleteCategory = (id: string) => {
-    const cat = categories.find(c => c.id === id);
-    if (cat) setDeleteTarget({ type: 'category', id, name: cat.name });
-  };
-
-  const executeDeleteCategory = async (id: string) => {
-    if (activeCategory === id) setActiveCategory(null);
-    const uncategorizedId = categories.find(c => c.name === 'Uncategorized')?.id || 'cat-6';
-
-    const updatedLinks = links.map(l => l.categoryId === id ? { ...l, categoryId: uncategorizedId } : l);
-
-    try {
-      await db.categories.delete(id);
-      setCategories(prev => prev.filter(c => c.id !== id));
-      setLinks(updatedLinks);
-      for (const l of updatedLinks.filter(l => l.categoryId === uncategorizedId)) {
-        await db.links.upsert(l);
-      }
-    } catch (e: any) {
-      alert(`Failed to delete category: ${e.message}`);
-    }
-  };
-
-  const handleReorderCategories = (startIndex: number, endIndex: number) => {
-    setCategories(prev => {
-      const newCats = [...prev];
-      const [removed] = newCats.splice(startIndex, 1);
-      newCats.splice(endIndex, 0, removed);
-      return newCats;
-    });
-  };
-
+  // Import handler
   const handleImport = async (parsedBookmarks: ParsedBookmark[], mode: 'add' | 'replace', strategy: 'fast' | 'accurate') => {
     const uniqueInput = Array.from(new Map(parsedBookmarks.map(item => [item.url.toLowerCase(), item])).values());
     const existingUrls = mode === 'replace' ? new Set<string>() : new Set(links.map(l => l.url.toLowerCase()));
@@ -321,7 +154,7 @@ const App: React.FC = () => {
       const uncategorizedId = categories.find(c => c.name === 'Uncategorized')?.id || 'cat-6';
       for (let i = 0; i < toProcess.length; i++) {
         const b = toProcess[i];
-        const newLink = {
+        const newLink: Link = {
           id: `link-fast-${Date.now()}-${i}`,
           url: b.url,
           title: b.title,
@@ -351,7 +184,7 @@ const App: React.FC = () => {
         let targetCategory = categories.find(c => c.name.toLowerCase() === result.categoryName.toLowerCase());
 
         if (!targetCategory) {
-          const newCat: Category = {
+          const newCat = {
             id: `cat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             name: result.categoryName,
             color: CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)],
@@ -363,7 +196,7 @@ const App: React.FC = () => {
           targetCategory = newCat;
         }
 
-        const newLink = {
+        const newLink: Link = {
           id: `link-import-${Date.now()}-${i}`,
           url: b.url,
           title: result.suggestedTitle || b.title,
@@ -380,7 +213,7 @@ const App: React.FC = () => {
         await new Promise(r => setTimeout(r, 500));
         if (i % 5 === 0 || i === toProcess.length - 1) setLinks([...finalLinks]);
       } catch (err) {
-        const fallback = {
+        const fallback: Link = {
           id: `link-import-${Date.now()}-${i}`,
           url: b.url,
           title: b.title,
@@ -399,46 +232,37 @@ const App: React.FC = () => {
     setImportProgress({ current: 0, total: 0, active: false });
   };
 
+  // Delete handlers
   const confirmDeleteLink = (id: string) => {
     const link = links.find(l => l.id === id);
     if (link) setDeleteTarget({ type: 'link', id, name: link.title });
   };
 
-  const executeDeleteLink = async (id: string) => {
-    try {
-      await db.links.delete(id);
-      setLinks(prev => prev.filter(l => l.id !== id));
-    } catch (e: any) {
-      alert(`Delete failed: ${e.message}`);
-    }
+  const confirmDeleteCategory = (id: string) => {
+    const cat = categories.find(c => c.id === id);
+    if (cat) setDeleteTarget({ type: 'category', id, name: cat.name });
   };
 
-  const togglePin = async (id: string) => {
-    const updated = links.map(l => l.id === id ? { ...l, isPinned: !l.isPinned } : l);
-    const item = updated.find(l => l.id === id);
-    if (item) {
-      try {
-        await db.links.upsert(item);
-        setLinks(updated);
-      } catch (e: any) {
-        alert(e.message);
+  const executeDelete = async () => {
+    if (!deleteTarget) return;
+    
+    if (deleteTarget.type === 'link') {
+      await deleteLinkHook(deleteTarget.id);
+    } else {
+      if (activeCategory === deleteTarget.id) setActiveCategory(null);
+      const uncategorizedId = categories.find(c => c.name === 'Uncategorized')?.id || 'cat-6';
+      const updatedLinks = links.map(l => l.categoryId === deleteTarget.id ? { ...l, categoryId: uncategorizedId } : l);
+      
+      await deleteCategoryHook(deleteTarget.id);
+      setLinks(updatedLinks);
+      for (const l of updatedLinks.filter(l => l.categoryId === uncategorizedId)) {
+        await db.links.upsert(l);
       }
     }
+    setDeleteTarget(null);
   };
 
-  const handleCategoryChange = async (linkId: string, categoryId: string) => {
-    const updated = links.map(l => l.id === linkId ? { ...l, categoryId } : l);
-    const item = updated.find(l => l.id === linkId);
-    if (item) {
-      try {
-        await db.links.upsert(item);
-        setLinks(updated);
-      } catch (e: any) {
-        alert(e.message);
-      }
-    }
-  };
-
+  // Drag and drop
   const handleDragStart = (id: string) => {
     if (sortBy !== 'custom') return;
     setDraggedLinkId(id);
@@ -463,9 +287,7 @@ const App: React.FC = () => {
     setDraggedLinkId(null);
   };
 
-  const handlePinnedDragStart = (id: string) => {
-    setDraggedPinnedId(id);
-  };
+  const handlePinnedDragStart = (id: string) => setDraggedPinnedId(id);
 
   const handlePinnedDrop = (targetId: string) => {
     if (!draggedPinnedId || draggedPinnedId === targetId) return;
@@ -491,10 +313,9 @@ const App: React.FC = () => {
     }
   };
 
-  // Fix: Adding explicit generic type to useMemo to ensure it's typed as Link[] and not unknown
+  // Computed values
   const pinnedLinks = useMemo<Link[]>(() => links.filter(l => l.isPinned), [links]);
 
-  // Fix: Adding explicit generic type to useMemo to ensure it's typed as Link[] and not unknown
   const sortedLinks = useMemo<Link[]>(() => {
     let result = [...links];
     if (sortBy === 'date') result.sort((a, b) => b.createdAt - a.createdAt);
@@ -502,18 +323,15 @@ const App: React.FC = () => {
     return result;
   }, [links, sortBy]);
 
-  // Fix: Adding explicit generic type to useMemo to ensure filteredLinks is typed correctly
   const filteredLinks = useMemo<Link[]>(() => {
     return sortedLinks.filter(link => {
-      const matchesSearch = link.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        link.url.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = link.title.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+        link.url.toLowerCase().includes(debouncedSearch.toLowerCase());
       const matchesCategory = activeCategory ? link.categoryId === activeCategory : true;
       return matchesSearch && matchesCategory;
     });
-  }, [sortedLinks, searchQuery, activeCategory]);
+  }, [sortedLinks, debouncedSearch, activeCategory]);
 
-  // Grouping logic for the active category
-  // Fix: Adding explicit generic type to useMemo to avoid unknown type issues when grouped
   const linksBySection = useMemo<Record<string, Link[]> | null>(() => {
     if (!activeCategory) return null;
     const groups: Record<string, Link[]> = {};
@@ -525,6 +343,16 @@ const App: React.FC = () => {
     return groups;
   }, [filteredLinks, activeCategory]);
 
+  // Performance: Memoize links grouped by category
+  const linksByCategory = useMemo(() => {
+    return links.reduce((acc, link) => {
+      const cat = link.categoryId || 'uncategorized';
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(link);
+      return acc;
+    }, {} as Record<string, Link[]>);
+  }, [links]);
+
   const stats = useMemo(() => ({
     total: links.length,
     ai: links.filter(l => categories.find(c => c.id === l.categoryId)?.name === 'AI Tools').length,
@@ -534,6 +362,7 @@ const App: React.FC = () => {
   const formattedTime = currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
   const formattedDate = currentTime.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
+  // Loading state
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-[#0c0c0e] flex items-center justify-center">
@@ -549,17 +378,14 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen selection:bg-neon-accent selection:text-black">
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
       <ProgressModal current={importProgress.current} total={importProgress.total} isComplete={!importProgress.active} />
 
       {deleteTarget && (
         <DeleteConfirmationModal
           isOpen={!!deleteTarget}
           onClose={() => setDeleteTarget(null)}
-          onConfirm={() => {
-            if (!deleteTarget) return;
-            if (deleteTarget.type === 'link') executeDeleteLink(deleteTarget.id);
-            else executeDeleteCategory(deleteTarget.id);
-          }}
+          onConfirm={executeDelete}
           title={`Delete ${deleteTarget.type === 'link' ? 'Resource' : 'Segment'}`}
           message={deleteTarget.type === 'link' ? `Delete "${deleteTarget.name}" permanently?` : `Delete segment "${deleteTarget.name}"? Links will be moved to Uncategorized.`}
         />
@@ -567,7 +393,7 @@ const App: React.FC = () => {
 
       <nav className="h-20 flex items-center justify-between px-6 lg:px-12 sticky top-0 bg-[#0c0c0e]/80 backdrop-blur-xl z-40 border-b border-white/[0.02]">
         <div className="flex items-center gap-12">
-          <div className="flex items-center gap-3 group cursor-pointer" onClick={() => setCurrentView('dashboard')}>
+          <div className="flex items-center gap-4 group cursor-pointer" onClick={() => setCurrentView('dashboard')}>
             <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center rotate-3 group-hover:rotate-0 transition-transform duration-300 overflow-hidden p-1 shadow-lg border border-white/10">
               <img src="https://i.postimg.cc/L5YGmDmQ/0058ae6839e5283293bcada1598f2309.jpg" alt="Logo" className="w-full h-full object-contain rounded-lg" />
             </div>
@@ -588,11 +414,9 @@ const App: React.FC = () => {
           <div className="flex items-center gap-4">
             <div className={`px-3 py-1 bg-white/5 border border-emerald-500/30 rounded-full flex items-center gap-2`}>
               <div className={`w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse`}></div>
-              <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
-                Cloud Live
-              </span>
+              <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Cloud Live</span>
             </div>
-            <button onClick={handleLogout} className="w-9 h-9 rounded-full bg-zinc-800 border border-white/10 overflow-hidden cursor-pointer hover:border-red-500 transition-all group relative">
+            <button onClick={() => supabase.auth.signOut()} className="w-9 h-9 rounded-full bg-zinc-800 border border-white/10 overflow-hidden cursor-pointer hover:border-red-500 transition-all group relative">
               <img src={`https://ui-avatars.com/api/?name=${session?.user?.email || 'Local'}&background=c1ff00&color=000`} alt="avatar" />
               <div className="absolute inset-0 bg-red-500/80 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
                 <i className="fa-solid fa-power-off text-xs"></i>
@@ -636,18 +460,15 @@ const App: React.FC = () => {
                 <div className="w-1/2 relative bg-zinc-900/30"><NewsCarousel news={news} isLoading={isNewsLoading} /></div>
               </div>
 
-              {/* Priority Vault Card - Grid Style */}
               <div className="lg:col-span-4 bento-card p-8 flex flex-col shadow-2xl min-h-[400px]">
                 <div className="flex items-center justify-between mb-8">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-4">
                     <div className="w-9 h-9 rounded-xl bg-[#1c1c1c] border border-white/10 flex items-center justify-center text-white">
                       <i className="fa-solid fa-thumbtack text-xs"></i>
                     </div>
                     <p className="text-zinc-400 text-[10px] font-black uppercase tracking-[0.2em]">Priority Vault</p>
                   </div>
-                  <span className="px-3 py-1 bg-white/5 rounded-full text-[9px] font-black text-zinc-600 uppercase tracking-widest">
-                    {pinnedLinks.length} Items
-                  </span>
+                  <span className="px-3 py-1 bg-white/5 rounded-full text-[9px] font-black text-zinc-600 uppercase tracking-widest">{pinnedLinks.length} Items</span>
                 </div>
 
                 <div className="flex-grow overflow-y-auto pr-2 no-scrollbar grid grid-cols-3 gap-4 content-start">
@@ -662,7 +483,7 @@ const App: React.FC = () => {
                         onDragStart={() => handlePinnedDragStart(link.id)}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={() => handlePinnedDrop(link.id)}
-                        className="group relative flex flex-col items-center justify-center p-3 bg-white/[0.02] rounded-2xl border border-white/[0.05] hover:bg-white/[0.05] hover:border-white/10 transition-all cursor-pointer text-center min-h-[80px]"
+                        className="group relative flex flex-col items-center justify-center p-4 bg-white/[0.02] rounded-2xl border border-white/[0.05] hover:bg-white/[0.05] hover:border-white/10 transition-all cursor-pointer text-center min-h-[80px]"
                       >
                         <div className="w-[34px] h-[34px] rounded-xl bg-zinc-900 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 shadow-lg mb-2">
                           <img
@@ -672,9 +493,7 @@ const App: React.FC = () => {
                             onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=18181b&color=fff`)}
                           />
                         </div>
-                        <p className="text-[9px] font-black text-zinc-400 truncate w-full uppercase tracking-tighter leading-tight">
-                          {link.title}
-                        </p>
+                        <p className="text-[9px] font-black text-zinc-400 truncate w-full uppercase tracking-tighter leading-tight">{link.title}</p>
                       </a>
                     ))
                   ) : (
@@ -686,36 +505,24 @@ const App: React.FC = () => {
                     </div>
                   )}
                 </div>
-
               </div>
             </div>
 
             <div className="space-y-10">
               <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-8 relative group/nav">
                 <div className="relative flex items-center w-full xl:w-auto">
-                  {/* Left Arrow */}
-                  <button
-                    onClick={() => scrollCategories('left')}
-                    className="absolute -left-4 z-20 w-8 h-8 rounded-full bg-zinc-900/80 border border-white/10 text-white flex items-center justify-center hover:bg-neon-accent hover:text-black transition-all opacity-0 group-hover/nav:opacity-100 shadow-xl"
-                  >
+                  <button onClick={() => scrollCategories('left')} className="absolute -left-4 z-20 w-8 h-8 rounded-full bg-zinc-900/80 border border-white/10 text-white flex items-center justify-center hover:bg-neon-accent hover:text-black transition-all opacity-0 group-hover/nav:opacity-100 shadow-xl">
                     <i className="fa-solid fa-chevron-left text-[10px]"></i>
                   </button>
 
-                  <div
-                    ref={categoryScrollRef}
-                    className="flex items-center bg-[#151518] border border-white/[0.04] rounded-full p-1.5 w-full xl:w-auto overflow-x-auto no-scrollbar shadow-2xl relative"
-                  >
+                  <div ref={categoryScrollRef} className="flex items-center bg-[#151518] border border-white/[0.04] rounded-full p-1.5 w-full xl:w-auto overflow-x-auto no-scrollbar shadow-2xl relative">
                     <button onClick={() => setActiveCategory(null)} className={`whitespace-nowrap px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-[0.2em] transition-all ${!activeCategory ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Primary Feed</button>
                     {categories.map(cat => (
                       <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={`whitespace-nowrap px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-[0.2em] transition-all ${activeCategory === cat.id ? `${cat.color} text-black shadow-lg` : 'text-zinc-500 hover:text-white'}`}>{cat.name}</button>
                     ))}
                   </div>
 
-                  {/* Right Arrow */}
-                  <button
-                    onClick={() => scrollCategories('right')}
-                    className="absolute -right-4 z-20 w-8 h-8 rounded-full bg-zinc-900/80 border border-white/10 text-white flex items-center justify-center hover:bg-neon-accent hover:text-black transition-all opacity-0 group-hover/nav:opacity-100 shadow-xl"
-                  >
+                  <button onClick={() => scrollCategories('right')} className="absolute -right-4 z-20 w-8 h-8 rounded-full bg-zinc-900/80 border border-white/10 text-white flex items-center justify-center hover:bg-neon-accent hover:text-black transition-all opacity-0 group-hover/nav:opacity-100 shadow-xl">
                     <i className="fa-solid fa-chevron-right text-[10px]"></i>
                   </button>
                 </div>
@@ -739,7 +546,7 @@ const App: React.FC = () => {
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
                         {sectionLinks.map((link) => (
                           <div key={link.id}>
-                            <LinkCard link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
+                            <LinkCard link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onUpdateLink={updateLink} onChangeCategory={changeCategory} />
                           </div>
                         ))}
                       </div>
@@ -750,16 +557,28 @@ const App: React.FC = () => {
                     {filteredLinks.length > 0 ? (
                       filteredLinks.map((link) => (
                         <div key={link.id} draggable={sortBy === 'custom'} onDragStart={() => handleDragStart(link.id)} onDragOver={handleDragOver} onDrop={() => handleDrop(link.id)} className={sortBy === 'custom' ? 'cursor-grab active:cursor-grabbing' : ''}>
-                          <LinkCard link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
+                          <LinkCard link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onUpdateLink={updateLink} onChangeCategory={changeCategory} />
                         </div>
                       ))
+                    ) : searchQuery ? (
+                      <div className="col-span-full">
+                        <EmptyState
+                          icon={<NoResultsIllustration />}
+                          title="No results found"
+                          description={`No links matching "${searchQuery}". Try a different search term.`}
+                        />
+                      </div>
                     ) : (
-                      <div className="col-span-full py-24 text-center space-y-4">
-                        <i className="fa-solid fa-box-open text-4xl text-zinc-800"></i>
-                        <div className="space-y-1">
-                          <p className="text-zinc-500 font-black uppercase tracking-widest text-xs">The vault is empty</p>
-                          <p className="text-zinc-700 text-[10px] font-bold">Start adding resources to sync them to your Supabase project.</p>
-                        </div>
+                      <div className="col-span-full">
+                        <EmptyState
+                          icon={<NoLinksIllustration />}
+                          title="No links yet"
+                          description="Start building your collection by adding your first link. Use the button above or press Cmd/Ctrl+K"
+                          action={{
+                            label: "Add Your First Link",
+                            onClick: () => setIsModalOpen(true),
+                          }}
+                        />
                       </div>
                     )}
                   </div>
@@ -767,10 +586,20 @@ const App: React.FC = () => {
               </div>
             </div>
           </>
-        ) : <SettingsView categories={categories} currentTheme={theme} onThemeChange={setTheme} onAddCategory={handleAddCategory} onUpdateCategory={handleUpdateCategory} onDeleteCategory={confirmDeleteCategory} onReorderCategories={handleReorderCategories} />}
+        ) : (
+          <SettingsView 
+            categories={categories} 
+            currentTheme={theme} 
+            onThemeChange={setTheme} 
+            onAddCategory={addCategory} 
+            onUpdateCategory={updateCategory} 
+            onDeleteCategory={confirmDeleteCategory} 
+            onReorderCategories={reorderCategories} 
+          />
+        )}
       </main>
 
-      <AddLinkModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} categories={categories} onAdd={addLink} />
+      <AddLinkModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} categories={categories} onAdd={handleAddLink} showToast={showToast} />
       <ImportModal isOpen={isImportModalOpen} onClose={() => setIsImportModalOpen(false)} onImport={handleImport} existingCount={links.length} />
     </div>
   );
