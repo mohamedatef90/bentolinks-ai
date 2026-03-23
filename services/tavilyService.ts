@@ -14,8 +14,12 @@ export interface TavilySearchResponse {
   results: TavilyNewsResult[];
 }
 
-const TAVILY_API_KEY = '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';
+const TAVILY_API_KEY = import.meta.env.VITE_TAVILY_API_KEY || '';
 const TAVILY_ENDPOINT = 'https://api.tavily.com/search';
+
+if (!TAVILY_API_KEY) {
+  console.warn('⚠️ VITE_TAVILY_API_KEY not found. News feature will be disabled.');
+}
 
 /**
  * Fetch latest tech news using Tavily API

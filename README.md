@@ -119,15 +119,29 @@ npm install
 # Create environment file
 cp .env.example .env.local
 
-# Add your API keys to .env.local
-# VITE_GEMINI_API_KEY=your_gemini_key_here
-# (Supabase keys are included for demo)
+# Open .env.local and add your API keys
+# Required: VITE_GEMINI_API_KEY (get from https://aistudio.google.com/apikey)
+# Optional: VITE_TAVILY_API_KEY (get from https://tavily.com)
+# Optional: VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY (get from https://supabase.com)
 
 # Run development server
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) 🎉
+Open [http://localhost:5173](http://localhost:5173) 🎉
+
+### Get Free API Keys
+
+| Service | Purpose | Free Tier | Get Key |
+|---------|---------|-----------|---------|
+| **Google Gemini** | AI link analysis (Required) | 1,500 requests/day | [Get Key](https://aistudio.google.com/apikey) |
+| **Tavily** | Real-time news (Optional) | 1,000 credits/month | [Get Key](https://tavily.com) |
+| **Supabase** | Cloud sync (Optional) | Free tier available | [Get Key](https://supabase.com) |
+
+**Notes:**
+- ✅ Works offline without Supabase (uses LocalStorage)
+- ✅ News disabled gracefully without Tavily
+- ⚠️ Gemini API key is required for AI features
 
 ---
 
@@ -212,21 +226,16 @@ vercel deploy --prod
 Add these in your Vercel dashboard (Settings → Environment Variables):
 
 ```env
-# Required: Google Gemini API for link analysis
+# Required
 VITE_GEMINI_API_KEY=your_gemini_api_key
 
-# Optional: Supabase for cloud sync (demo keys included)
+# Optional
+VITE_TAVILY_API_KEY=your_tavily_api_key
 VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-
-# Note: Tavily API key is hardcoded in tavilyService.ts
-# (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)
 ```
 
-**Get API Keys:**
-- Gemini: https://aistudio.google.com/apikey (Free: 1,500 requests/day)
-- Tavily: https://tavily.com (Free: 1,000 credits/month, included in code)
-- Supabase: https://supabase.com (Optional for cloud sync)
+See `.env.example` for detailed documentation.
 
 ---
 
@@ -281,13 +290,32 @@ Comprehensive guides available in the repository:
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please follow these steps:
+We welcome contributions from everyone! Whether you're fixing bugs, adding features, or improving documentation.
 
+### Quick Start
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/bentolinks-ai.git`
+3. Create a branch: `git checkout -b feature/amazing-feature`
+4. Make your changes
+5. Commit: `git commit -m 'feat: add amazing feature'`
+6. Push: `git push origin feature/amazing-feature`
+7. Open a Pull Request
+
+### Guidelines
+- Follow [Conventional Commits](https://www.conventionalcommits.org/)
+- Write TypeScript (not JavaScript)
+- Use Tailwind CSS for styling
+- Test your changes locally (`npm run build`)
+- Update documentation if needed
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+### Good First Issues
+- 🐛 Fix UI bugs
+- 📖 Improve documentation
+- ♿ Enhance accessibility
+- 🎨 Add new themes
+- ⌨️ Add keyboard shortcuts
 
 ---
 
