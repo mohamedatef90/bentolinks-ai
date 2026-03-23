@@ -17,7 +17,7 @@
 ### 🤖 **AI-Powered**
 - **Smart Analysis** - Automatically extracts title, description, and category using Google Gemini
 - **Intelligent Categorization** - AI suggests relevant categories and icons
-- **News Carousel** - AI-generated tech news summaries
+- **News Feed** - Real-time tech news via Tavily API (TechCrunch, The Verge, etc.)
 
 ### ☁️ **Hybrid Storage**
 - **Cloud Sync** - Supabase integration for cross-device access
