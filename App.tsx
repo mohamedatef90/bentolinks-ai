@@ -7,7 +7,7 @@ import ImportModal from './components/ImportModal';
 import ProgressModal from './components/ProgressModal';
 import SettingsView from './components/SettingsView';
 import DeleteConfirmationModal from './components/DeleteConfirmationModal';
-import NewsCarousel from './components/NewsCarousel';
+import NewsVerticalFeed from './components/NewsVerticalFeed';
 import AuthView from './components/AuthView';
 import { ToastContainer, useToast } from './components/Toast';
 import { EmptyState } from './components/EmptyState';
@@ -457,7 +457,7 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                <div className="w-1/2 relative bg-zinc-900/30"><NewsCarousel news={news} isLoading={isNewsLoading} /></div>
+                <div className="w-1/2 relative bg-zinc-900/30"><NewsVerticalFeed news={news} isLoading={isNewsLoading} /></div>
               </div>
 
               <div className="lg:col-span-4 bento-card p-8 flex flex-col shadow-2xl min-h-[400px]">
