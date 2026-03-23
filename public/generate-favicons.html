@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Generate Favicons</title>
+</head>
+<body>
+    <h2>BentoLinks Favicon Generator</h2>
+    <canvas id="canvas32" width="32" height="32" style="border:1px solid #ccc; margin: 10px;"></canvas>
+    <canvas id="canvas192" width="192" height="192" style="border:1px solid #ccc; margin: 10px;"></canvas>
+    <br>
+    <button onclick="downloadFavicons()">Download Favicons</button>
+
+    <script>
+        function drawFavicon(canvas) {
+            const ctx = canvas.getContext('2d');
+            const size = canvas.width;
+            const scale = size / 100;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, size, size);
+
+            // Background circle
+            ctx.fillStyle = '#0a0a0a';
+            ctx.beginPath();
+            ctx.arc(size/2, size/2, (size/2) - 2*scale, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Border
+            ctx.strokeStyle = '#c1ff00';
+            ctx.lineWidth = 2 * scale;
+            ctx.stroke();
+
+            // Bookmark shape
+            ctx.fillStyle = '#c1ff00';
+            ctx.beginPath();
+            ctx.moveTo(30 * scale, 25 * scale);
+            ctx.lineTo(30 * scale, 75 * scale);
+            ctx.lineTo(50 * scale, 60 * scale);
+            ctx.lineTo(70 * scale, 75 * scale);
+            ctx.lineTo(70 * scale, 25 * scale);
+            ctx.closePath();
+            ctx.fill();
+
+            // AI sparkles
+            ctx.fillStyle = '#ffffff';
+            ctx.globalAlpha = 0.9;
+            ctx.beginPath();
+            ctx.arc(65 * scale, 35 * scale, 3 * scale, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.globalAlpha = 0.7;
+            ctx.beginPath();
+            ctx.arc(68 * scale, 40 * scale, 2 * scale, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.globalAlpha = 0.8;
+            ctx.beginPath();
+            ctx.arc(62 * scale, 40 * scale, 1.5 * scale, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.globalAlpha = 1.0;
+        }
+
+        // Draw on both canvases
+        drawFavicon(document.getElementById('canvas32'));
+        drawFavicon(document.getElementById('canvas192'));
+
+        function downloadFavicons() {
+            // Download 32x32 (favicon.png)
+            const canvas32 = document.getElementById('canvas32');
+            const link32 = document.createElement('a');
+            link32.download = 'favicon.png';
+            link32.href = canvas32.toDataURL('image/png');
+            link32.click();
+
+            // Download 192x192 (apple-touch-icon.png)
+            setTimeout(() => {
+                const canvas192 = document.getElementById('canvas192');
+                const link192 = document.createElement('a');
+                link192.download = 'apple-touch-icon.png';
+                link192.href = canvas192.toDataURL('image/png');
+                link192.click();
+            }, 500);
+
+            alert('Favicons downloaded! Move them to the /public folder.');
+        }
+    </script>
+</body>
+</html>

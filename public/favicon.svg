@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="#0a0a0a" stroke="#c1ff00" stroke-width="2"/>
+  
+  <!-- Bookmark icon with neon glow -->
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Bookmark shape -->
+  <path 
+    d="M 30 25 L 30 75 L 50 60 L 70 75 L 70 25 Z" 
+    fill="#c1ff00" 
+    filter="url(#glow)"
+  />
+  
+  <!-- AI sparkle -->
+  <circle cx="65" cy="35" r="3" fill="#ffffff" opacity="0.9"/>
+  <circle cx="68" cy="40" r="2" fill="#ffffff" opacity="0.7"/>
+  <circle cx="62" cy="40" r="1.5" fill="#ffffff" opacity="0.8"/>
+</svg>
