@@ -30,7 +30,7 @@ export const analyzeLink = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.0-flash',
       contents: `Analyze this URL: ${url}.
       Your task is to provide metadata and a hierarchical categorization (Category -> Section).
 
