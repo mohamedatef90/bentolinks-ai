@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, Category } from '../types';
 import { analyzeLink } from '../services/geminiService';
+import { LinkCardTooltip } from './LinkCardTooltip';
 
 interface LinkCardProps {
   link: Link;
@@ -79,6 +80,7 @@ const LinkCard: React.FC<LinkCardProps> = ({
   };
 
   return (
+    <LinkCardTooltip link={link} category={category}>
     <article 
       draggable={isDraggable}
       onDragStart={() => isDraggable && onDragStart?.(index)}
@@ -236,6 +238,7 @@ const LinkCard: React.FC<LinkCardProps> = ({
         </div>
       </div>
     </article>
+    </LinkCardTooltip>
   );
 };
 
