@@ -15,9 +15,10 @@
 ## ✨ Features
 
 ### 🤖 **AI-Powered**
-- **Smart Analysis** - Automatically extracts title, description, and category using Google Gemini
+- **Smart Analysis** - Automatically extracts title, description, and category using Google Gemini 2.5 Flash
 - **Intelligent Categorization** - AI suggests relevant categories and icons
-- **News Feed** - Real-time tech news via Tavily API (TechCrunch, The Verge, etc.)
+- **Real-Time News Feed** - Auto-scrolling tech news via Tavily API (TechCrunch, The Verge, Ars Technica, etc.)
+- **Hover Tooltips** - Smart preview cards on link hover with full details
 
 ### ☁️ **Hybrid Storage**
 - **Cloud Sync** - Supabase integration for cross-device access
@@ -29,6 +30,8 @@
 - **Smooth Animations** - 300ms transitions, gradient borders, glow effects
 - **Responsive** - Mobile, tablet, and desktop optimized
 - **Empty States** - Engaging illustrations and helpful CTAs
+- **Custom Favicons** - Professional neon bookmark design (SVG + PNG + PWA manifest)
+- **Vertical News Feed** - Auto-scrolling news with hover-to-pause
 
 ### ♿ **Accessible**
 - **WCAG 2.1 AA/AAA** compliant
@@ -48,6 +51,49 @@
 - **Context Menu** - Right-click quick actions
 - **Import/Export** - Import Chrome/Firefox bookmarks (HTML)
 - **Themes** - Default (dark), Professional (light), Funny
+
+---
+
+## 🆕 Latest Updates (March 2026)
+
+### **v1.3.0 - Major Enhancements**
+
+#### 🎉 **New Features**
+- ✅ **Vertical Auto-scroll News Feed** - Replaced carousel with smooth auto-scrolling feed
+  - Auto-scroll with hover-to-pause
+  - Purple-themed scrollbar
+  - Infinite loop animation
+  - Pause/Play button
+  
+- ✅ **Hover Tooltips** - Smart preview cards on link hover
+  - 400px wide detail cards
+  - Full untruncated title & description
+  - Smart positioning (avoids screen edges)
+  - 300ms delay to prevent accidental triggers
+  
+- ✅ **Professional Favicons** - Complete favicon suite
+  - Custom SVG bookmark design (neon theme)
+  - PNG fallbacks (32x32, 192x192)
+  - PWA manifest with standalone mode
+  - Apple touch icon for iOS
+
+#### 🔧 **Technical Improvements**
+- ✅ **Tavily News Integration** - Switched from Gemini to Tavily API
+  - Saves 1,500 Gemini tokens/day
+  - Real-time news from TechCrunch, The Verge, Ars Technica, Wired, etc.
+  - 1-hour caching
+  - 1,000 credits/month (plenty of headroom)
+  
+- ✅ **Gemini API Fixes** - Updated to latest stable model
+  - Model: `gemini-2.5-flash` (June 2025 release)
+  - Fixed API key variable: `import.meta.env.VITE_GEMINI_API_KEY`
+  - Better retry logic: exponential backoff (5s, 10s, 20s)
+  - Verified via Google API models endpoint
+
+#### 📊 **Performance**
+- Bundle size: 261.55 KB (gzip: 77.98 KB)
+- +0.8 KB total for all new features (minimal impact!)
+- Optimized code splitting maintained
 
 ---
 
@@ -92,7 +138,8 @@ Open [http://localhost:3000](http://localhost:3000) 🎉
 | **Frontend** | React 19, TypeScript 5.7, Vite 6 |
 | **Styling** | Tailwind CSS v4, Custom Design System |
 | **Database** | Supabase (PostgreSQL), LocalStorage |
-| **AI** | Google Gemini (gemini-3-flash-preview) |
+| **AI** | Google Gemini 2.5 Flash (link analysis) |
+| **News** | Tavily Search API (real-time tech news) |
 | **Deployment** | Vercel |
 | **Icons** | Font Awesome |
 
@@ -165,10 +212,21 @@ vercel deploy --prod
 Add these in your Vercel dashboard (Settings → Environment Variables):
 
 ```env
+# Required: Google Gemini API for link analysis
 VITE_GEMINI_API_KEY=your_gemini_api_key
+
+# Optional: Supabase for cloud sync (demo keys included)
 VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+
+# Note: Tavily API key is hardcoded in tavilyService.ts
+# (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)
 ```
+
+**Get API Keys:**
+- Gemini: https://aistudio.google.com/apikey (Free: 1,500 requests/day)
+- Tavily: https://tavily.com (Free: 1,000 credits/month, included in code)
+- Supabase: https://supabase.com (Optional for cloud sync)
 
 ---
 
@@ -241,11 +299,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- **Google Gemini** - AI-powered link analysis
+- **Google Gemini 2.5 Flash** - AI-powered link analysis
+- **Tavily Search API** - Real-time tech news aggregation
 - **Supabase** - Backend & authentication
 - **Vercel** - Hosting & deployment
-- **Tailwind CSS** - Styling framework
-- **React** - UI library
+- **Tailwind CSS v4** - Styling framework
+- **React 19** - UI library
 
 ---
 
