@@ -98,7 +98,7 @@ const NewsVerticalFeed = ({ news = [], isLoading }: NewsVerticalFeedProps) => {
         ref={scrollRef}
         onMouseEnter={() => setIsPaused(true)}
         onMouseLeave={() => setIsPaused(false)}
-        className="w-full h-full overflow-hidden pt-20 pb-8 px-6"
+        className="absolute inset-0 overflow-y-scroll pt-20 pb-8 px-6"
         style={{ scrollBehavior: 'auto' }}
       >
         <div className="space-y-4">
@@ -165,8 +165,18 @@ const NewsVerticalFeed = ({ news = [], isLoading }: NewsVerticalFeedProps) => {
 
       {/* Scrollbar hide */}
       <style>{`
-        .overflow-hidden::-webkit-scrollbar {
-          display: none;
+        .overflow-y-scroll::-webkit-scrollbar {
+          width: 4px;
+        }
+        .overflow-y-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .overflow-y-scroll::-webkit-scrollbar-thumb {
+          background: rgba(168, 85, 247, 0.3);
+          border-radius: 10px;
+        }
+        .overflow-y-scroll::-webkit-scrollbar-thumb:hover {
+          background: rgba(168, 85, 247, 0.5);
         }
       `}</style>
     </div>
