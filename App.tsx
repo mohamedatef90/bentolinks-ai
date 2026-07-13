@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Category, Link, AppTheme } from './types';
+import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom';
+import { Category, Link, AppTheme, Folder, SmartCollection } from './types';
 import LinkCard from './components/LinkCard';
 import AddLinkModal from './components/AddLinkModal';
 import ImportModal from './components/ImportModal';
@@ -8,6 +9,10 @@ import ProgressModal from './components/ProgressModal';
 import SettingsView from './components/SettingsView';
 import DeleteConfirmationModal from './components/DeleteConfirmationModal';
 import AuthView from './components/AuthView';
+import FolderSidebar from './components/FolderSidebar';
+import LibraryView, { LibraryMode } from './views/LibraryView';
+import ReaderView from './views/ReaderView';
+import FeedsView from './views/FeedsView';
 import { ParsedBookmark } from './services/bookmarkService';
 import { supabase } from './services/supabase';
 import { api, toLink } from './services/api';
@@ -15,10 +20,27 @@ import { Session, AuthChangeEvent } from '@supabase/supabase-js';
 
 type SortOption = 'date' | 'name' | 'custom';
 
+interface LibraryLayoutProps {
+  folders: Folder[];
+  smartCollections: SmartCollection[];
+  onDeleteSmartCollection: (id: string) => void;
+  children: React.ReactNode;
+}
+
+/** Module-level (not defined inside App) so it keeps a stable component identity across
+ * App's frequent re-renders (e.g. the once-a-second clock tick) — otherwise React would
+ * remount this subtree on every tick and the child view's data fetch would never finish. */
+const LibraryLayout: React.FC<LibraryLayoutProps> = ({ folders, smartCollections, onDeleteSmartCollection, children }) => (
+  <div className="flex gap-8 items-start">
+    <FolderSidebar folders={folders} smartCollections={smartCollections} onDeleteSmartCollection={onDeleteSmartCollection} />
+    <div className="flex-grow min-w-0">{children}</div>
+  </div>
+);
+
 const App: React.FC = () => {
+  const location = useLocation();
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [currentView, setCurrentView] = useState<'dashboard' | 'settings'>('dashboard');
   const [theme, setTheme] = useState<AppTheme>(() => {
     const saved = localStorage.getItem('bento-theme');
     return (saved as AppTheme) || 'default';
@@ -26,6 +48,8 @@ const App: React.FC = () => {
 
   const [links, setLinks] = useState<Link[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [smartCollections, setSmartCollections] = useState<SmartCollection[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('date');
@@ -78,14 +102,43 @@ const App: React.FC = () => {
 
   const fetchVaultData = async () => {
     try {
-      const [items, folders] = await Promise.all([
+      const [items, cats, folderTree, collections] = await Promise.all([
         api.items.fetchAll(),
         api.folders.fetchAll(),
+        api.folders.fetchTree(),
+        api.smartCollections.fetchAll(),
       ]);
-      setCategories(folders);
+      setCategories(cats);
+      setFolders(folderTree);
+      setSmartCollections(collections);
       setLinks(items.map(toLink));
     } catch (err) {
       console.error("Failed to fetch vault data:", err);
+    }
+  };
+
+  const refreshFolders = async () => {
+    try {
+      setFolders(await api.folders.fetchTree());
+    } catch (err) {
+      console.error("Failed to refresh folders:", err);
+    }
+  };
+
+  const refreshSmartCollections = async () => {
+    try {
+      setSmartCollections(await api.smartCollections.fetchAll());
+    } catch (err) {
+      console.error("Failed to refresh smart collections:", err);
+    }
+  };
+
+  const handleDeleteSmartCollection = async (id: string) => {
+    try {
+      await api.smartCollections.delete(id);
+      setSmartCollections(prev => prev.filter(c => c.id !== id));
+    } catch (e: any) {
+      alert(e.message);
     }
   };
 
@@ -130,6 +183,7 @@ const App: React.FC = () => {
     try {
       const created = await api.folders.create(name, color, icon);
       setCategories(prev => [...prev, created]);
+      refreshFolders();
     } catch (e: any) {
       alert(e.message);
     }
@@ -139,6 +193,7 @@ const App: React.FC = () => {
     try {
       await api.folders.update(id, { name, color, icon });
       setCategories(prev => prev.map(c => c.id === id ? { id, name, color, icon } : c));
+      refreshFolders();
     } catch (e: any) {
       alert(e.message);
     }
@@ -156,6 +211,7 @@ const App: React.FC = () => {
       setCategories(prev => prev.filter(c => c.id !== id));
       // Items in the folder become unfiled (assignments cascade server-side)
       setLinks(prev => prev.map(l => l.categoryId === id ? { ...l, categoryId: '' } : l));
+      refreshFolders();
     } catch (e: any) {
       alert(`Failed to delete folder: ${e.message}`);
     }
@@ -343,6 +399,16 @@ const App: React.FC = () => {
   const formattedTime = currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
   const formattedDate = currentTime.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
+  const renderLibrary = (mode: LibraryMode) => (
+    <LibraryView
+      mode={mode}
+      searchQuery={searchQuery}
+      folders={folders}
+      smartCollections={smartCollections}
+      onSmartCollectionsChanged={refreshSmartCollections}
+    />
+  );
+
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-[#0c0c0e] flex items-center justify-center">
@@ -376,15 +442,16 @@ const App: React.FC = () => {
 
       <nav className="h-20 flex items-center justify-between px-6 lg:px-12 sticky top-0 bg-[#0c0c0e]/80 backdrop-blur-xl z-40 border-b border-white/[0.02]">
         <div className="flex items-center gap-12">
-          <div className="flex items-center gap-3 group cursor-pointer" onClick={() => setCurrentView('dashboard')}>
+          <NavLink to="/" className="flex items-center gap-3 group cursor-pointer" onClick={() => setActiveCategory(null)}>
             <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center rotate-3 group-hover:rotate-0 transition-transform duration-300 overflow-hidden p-1 shadow-lg border border-white/10">
               <img src="https://i.postimg.cc/L5YGmDmQ/0058ae6839e5283293bcada1598f2309.jpg" alt="Logo" className="w-full h-full object-contain rounded-lg" />
             </div>
             <span className="font-extrabold text-xl tracking-tighter uppercase">BentoLinks</span>
-          </div>
+          </NavLink>
           <div className="hidden lg:flex items-center bg-[#151518] border border-white/[0.04] rounded-full p-1.5 shadow-xl">
-            <button onClick={() => { setActiveCategory(null); setCurrentView('dashboard'); }} className={`px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${currentView === 'dashboard' && !activeCategory ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Vault Hub</button>
-            <button onClick={() => setCurrentView('settings')} className={`px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${currentView === 'settings' ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Configuration</button>
+            <NavLink to="/" end onClick={() => setActiveCategory(null)} className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Vault Hub</NavLink>
+            <NavLink to="/library" className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Library</NavLink>
+            <NavLink to="/settings" className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Configuration</NavLink>
           </div>
         </div>
 
@@ -412,8 +479,9 @@ const App: React.FC = () => {
       </nav>
 
       <main className="max-w-[1600px] mx-auto p-6 lg:p-12 space-y-12 pb-24">
-        {currentView === 'dashboard' ? (
-          <>
+        <Routes>
+          <Route path="/" element={
+            <>
             <div className="flex flex-col md:flex-row items-end justify-between gap-6">
               <div>
                 <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">
@@ -604,7 +672,16 @@ const App: React.FC = () => {
               </div>
             </div>
           </>
-        ) : <SettingsView categories={categories} currentTheme={theme} onThemeChange={setTheme} onAddCategory={handleAddCategory} onUpdateCategory={handleUpdateCategory} onDeleteCategory={confirmDeleteCategory} onReorderCategories={handleReorderCategories} />}
+          } />
+          <Route path="/inbox" element={<LibraryLayout folders={folders} smartCollections={smartCollections} onDeleteSmartCollection={handleDeleteSmartCollection}>{renderLibrary('inbox')}</LibraryLayout>} />
+          <Route path="/library" element={<LibraryLayout folders={folders} smartCollections={smartCollections} onDeleteSmartCollection={handleDeleteSmartCollection}>{renderLibrary('library')}</LibraryLayout>} />
+          <Route path="/folder/:folderId" element={<LibraryLayout folders={folders} smartCollections={smartCollections} onDeleteSmartCollection={handleDeleteSmartCollection}>{renderLibrary('folder')}</LibraryLayout>} />
+          <Route path="/collection/:collectionId" element={<LibraryLayout folders={folders} smartCollections={smartCollections} onDeleteSmartCollection={handleDeleteSmartCollection}>{renderLibrary('collection')}</LibraryLayout>} />
+          <Route path="/feeds" element={<LibraryLayout folders={folders} smartCollections={smartCollections} onDeleteSmartCollection={handleDeleteSmartCollection}><FeedsView /></LibraryLayout>} />
+          <Route path="/item/:id" element={<ReaderView />} />
+          <Route path="/settings" element={<SettingsView categories={categories} currentTheme={theme} onThemeChange={setTheme} onAddCategory={handleAddCategory} onUpdateCategory={handleUpdateCategory} onDeleteCategory={confirmDeleteCategory} onReorderCategories={handleReorderCategories} />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </main>
 
       <AddLinkModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} categories={categories} onAdd={addLink} />

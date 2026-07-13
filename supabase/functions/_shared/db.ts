@@ -8,6 +8,21 @@ export function serviceClient(): SupabaseClient {
   );
 }
 
+/**
+ * Client that forwards the caller's JWT — RPCs and queries run under the
+ * user's identity, so RLS (user_id = auth.uid()) scopes every row.
+ */
+export function userClient(req: Request): SupabaseClient {
+  return createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_ANON_KEY')!,
+    {
+      global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
+      auth: { persistSession: false },
+    },
+  );
+}
+
 /** Resolve the calling user from the request's Authorization header. */
 export async function getUser(req: Request) {
   const authHeader = req.headers.get('Authorization') ?? '';

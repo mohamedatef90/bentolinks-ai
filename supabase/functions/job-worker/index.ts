@@ -6,13 +6,40 @@ import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { serviceClient, getSecret } from '../_shared/db.ts';
 import { Job, completeJob, failJob, enqueue } from '../_shared/queue.ts';
 import { parseArticle } from '../_shared/parsers/article.ts';
-import { enrichContent } from '../_shared/gemini.ts';
+import { parseYouTube } from '../_shared/parsers/youtube.ts';
+import { parseTweet } from '../_shared/parsers/tweet.ts';
+import { parsePdf } from '../_shared/parsers/pdf.ts';
+import { parseReel } from '../_shared/parsers/reel.ts';
+import { ParsedContent } from '../_shared/parsers/types.ts';
+import { enrichContent, embedText } from '../_shared/gemini.ts';
 
 const BATCH_SIZE = 5;
 const TIME_BUDGET_MS = 120_000;
 const MIN_ENRICH_CHARS = 200;
 
-async function handleParse(db: SupabaseClient, job: Job) {
+async function parseBySourceType(
+  db: SupabaseClient,
+  item: { url: string; source_type: string },
+  geminiKey: string | null,
+): Promise<ParsedContent> {
+  switch (item.source_type) {
+    case 'youtube':
+      return await parseYouTube(item.url, geminiKey);
+    case 'tweet':
+      return await parseTweet(item.url);
+    case 'pdf':
+      return await parsePdf(item.url, geminiKey);
+    case 'reel':
+      return await parseReel(item.url, {
+        apifyToken: await getSecret(db, 'APIFY_TOKEN'),
+        scraperApiKey: await getSecret(db, 'SCRAPER_API_KEY'),
+      });
+    default:
+      return await parseArticle(item.url);
+  }
+}
+
+async function handleParse(db: SupabaseClient, job: Job, geminiKey: string | null) {
   const { data: item, error } = await db
     .from('content_items')
     .select('id, user_id, url, source_type, title, status')
@@ -22,9 +49,15 @@ async function handleParse(db: SupabaseClient, job: Job) {
 
   await db.from('content_items').update({ status: 'parsing' }).eq('id', item.id);
 
-  // Phase 1: full parsing for articles; other source types get OG metadata only
-  // and are marked degraded until their dedicated parsers land (Phase 4).
-  const parsed = await parseArticle(item.url);
+  let parsed: ParsedContent;
+  try {
+    parsed = await parseBySourceType(db, item, geminiKey);
+  } catch (e) {
+    if (item.source_type === 'article' || item.source_type === 'pdf') throw e;
+    // Specialized endpoints are brittle — degrade to plain OG metadata.
+    console.warn(`${item.source_type} parser failed for ${item.url}, falling back to OG:`, (e as Error).message);
+    parsed = await parseArticle(item.url);
+  }
 
   const hasContent = !!parsed.content_text && parsed.content_text.length >= MIN_ENRICH_CHARS;
 
@@ -38,6 +71,8 @@ async function handleParse(db: SupabaseClient, job: Job) {
     published_at: parsed.published_at,
     content_text: parsed.content_text,
     word_count: parsed.word_count,
+    duration_seconds: parsed.duration_seconds ?? null,
+    raw_metadata: parsed.raw_metadata ?? null,
     status: hasContent ? 'enriching' : 'degraded',
   }).eq('id', item.id);
 
@@ -49,7 +84,7 @@ async function handleParse(db: SupabaseClient, job: Job) {
 async function handleEnrich(db: SupabaseClient, job: Job, geminiKey: string) {
   const { data: item, error } = await db
     .from('content_items')
-    .select('id, url, title, source_type, content_text, tags')
+    .select('id, user_id, url, title, source_type, content_text, tags')
     .eq('id', job.item_id!)
     .single();
   if (error || !item) throw new Error(`item ${job.item_id} not found`);
@@ -77,10 +112,35 @@ async function handleEnrich(db: SupabaseClient, job: Job, geminiKey: string) {
     language: result.language,
     status: 'ready',
   }).eq('id', item.id);
+
+  await enqueue(db, { user_id: item.user_id, item_id: item.id, job_type: 'embed' });
+}
+
+async function handleEmbed(db: SupabaseClient, job: Job, geminiKey: string) {
+  const { data: item, error } = await db
+    .from('content_items')
+    .select('id, title, summary, content_text')
+    .eq('id', job.item_id!)
+    .single();
+  if (error || !item) throw new Error(`item ${job.item_id} not found`);
+
+  const text = [item.title, item.summary, item.content_text?.slice(0, 2000)]
+    .filter(Boolean)
+    .join('\n');
+  if (!text.trim()) return; // nothing to embed — leave the column null
+
+  const vector = await embedText(geminiKey, text, 'RETRIEVAL_DOCUMENT');
+  const { error: upErr } = await db
+    .from('content_items')
+    .update({ embedding: JSON.stringify(vector) })
+    .eq('id', item.id);
+  if (upErr) throw new Error(`embedding write failed: ${upErr.message}`);
 }
 
 async function markItemForFailedJob(db: SupabaseClient, job: Job) {
   if (!job.item_id) return;
+  // A failed embed must not demote an already-ready item — search degrades to FTS.
+  if (job.job_type === 'embed') return;
   const status = job.job_type === 'parse' ? 'failed' : 'degraded';
   await db.from('content_items').update({ status }).eq('id', job.item_id);
 }
@@ -107,11 +167,15 @@ async function processJobs(): Promise<{ processed: number; failed: number }> {
       try {
         switch (job.job_type) {
           case 'parse':
-            await handleParse(db, job);
+            await handleParse(db, job, geminiKey);
             break;
           case 'enrich':
             if (!geminiKey) throw new Error('GEMINI_API_KEY missing from Vault');
             await handleEnrich(db, job, geminiKey);
+            break;
+          case 'embed':
+            if (!geminiKey) throw new Error('GEMINI_API_KEY missing from Vault');
+            await handleEmbed(db, job, geminiKey);
             break;
           default:
             throw new Error(`No handler for job_type ${job.job_type} yet`);
