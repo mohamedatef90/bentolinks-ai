@@ -5,7 +5,7 @@ import { parseBookmarksHTML, ParsedBookmark } from '../services/bookmarkService'
 interface ImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImport: (bookmarks: ParsedBookmark[], mode: 'add' | 'replace', strategy: 'fast' | 'accurate') => void;
+  onImport: (bookmarks: ParsedBookmark[], mode: 'add' | 'replace') => void;
   existingCount: number;
 }
 
@@ -14,7 +14,6 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, ex
   const [parsedCount, setParsedCount] = useState<number>(0);
   const [bookmarks, setBookmarks] = useState<ParsedBookmark[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [strategy, setStrategy] = useState<'fast' | 'accurate'>('accurate');
 
   if (!isOpen) return null;
 
@@ -38,13 +37,12 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, ex
 
   const handleAction = (mode: 'add' | 'replace') => {
     if (bookmarks.length === 0) return;
-    onImport(bookmarks, mode, strategy);
+    onImport(bookmarks, mode);
     onClose();
     // Reset state
     setFile(null);
     setBookmarks([]);
     setParsedCount(0);
-    setStrategy('accurate');
   };
 
   return (
@@ -80,31 +78,10 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, ex
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Resources Detected</p>
               </div>
 
-              {/* Strategy Selector */}
-              <div className="grid grid-cols-2 gap-4 p-1 bg-white/5 rounded-2xl border border-white/5">
-                <button
-                  type="button"
-                  onClick={() => setStrategy('fast')}
-                  className={`py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${strategy === 'fast' ? 'bg-white/10 text-[#c1ff00] border border-[#c1ff00]/30 shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                  <i className="fa-solid fa-bolt mr-2"></i>
-                  Fast Import
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStrategy('accurate')}
-                  className={`py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${strategy === 'accurate' ? 'bg-white/10 text-[#c1ff00] border border-[#c1ff00]/30 shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                  <i className="fa-solid fa-wand-magic-sparkles mr-2"></i>
-                  AI Analysis
-                </button>
-              </div>
-
               <div className="bg-white/[0.02] p-4 rounded-xl text-left">
                 <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.1em] leading-relaxed">
-                  {strategy === 'fast' 
-                    ? "⚡ FAST: Immediate import using basic keyword matching for categories. Best for large collections."
-                    : "✨ ACCURATE: Sequential AI analysis to determine precise categories, clean titles, and write descriptions."}
+                  ✨ Links are imported instantly, then parsed and AI-analyzed in the background
+                  (summary, tags, topic). Cards update live as each one completes.
                 </p>
               </div>
 

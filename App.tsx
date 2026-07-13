@@ -1,19 +1,16 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Category, Link, AppTheme, NewsItem, UserProfile } from './types';
-import { INITIAL_CATEGORIES, CATEGORY_COLORS, CATEGORY_ICONS } from './constants';
+import { Category, Link, AppTheme } from './types';
 import LinkCard from './components/LinkCard';
 import AddLinkModal from './components/AddLinkModal';
 import ImportModal from './components/ImportModal';
 import ProgressModal from './components/ProgressModal';
 import SettingsView from './components/SettingsView';
 import DeleteConfirmationModal from './components/DeleteConfirmationModal';
-import NewsCarousel from './components/NewsCarousel';
 import AuthView from './components/AuthView';
 import { ParsedBookmark } from './services/bookmarkService';
-import { analyzeLink } from './services/geminiService';
-import { GoogleGenAI, Type } from "@google/genai";
-import { supabase, db, isSupabaseConfigured } from './services/supabase';
+import { supabase } from './services/supabase';
+import { api, toLink } from './services/api';
 import { Session, AuthChangeEvent } from '@supabase/supabase-js';
 
 type SortOption = 'date' | 'name' | 'custom';
@@ -28,18 +25,16 @@ const App: React.FC = () => {
   });
 
   const [links, setLinks] = useState<Link[]>([]);
-  const [categories, setCategories] = useState<Category[]>(INITIAL_CATEGORIES);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<SortOption>('custom');
+  const [sortBy, setSortBy] = useState<SortOption>('date');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [draggedLinkId, setDraggedLinkId] = useState<string | null>(null);
   const [draggedPinnedId, setDraggedPinnedId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  const [news, setNews] = useState<NewsItem[]>([]);
-  const [isNewsLoading, setIsNewsLoading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'link' | 'category', id: string, name: string } | null>(null);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, active: false });
 
@@ -59,41 +54,36 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (isAuthLoading) return;
+    if (isAuthLoading || !session) return;
     fetchVaultData();
+
+    // Live pipeline updates: pending -> parsing -> enriching -> ready
+    const unsubscribe = api.items.subscribeToChanges((updated) => {
+      setLinks(prev => prev.map(l => {
+        if (l.id !== updated.id) return l;
+        return {
+          ...l,
+          title: (updated.title as string) ?? l.title,
+          description: (updated.summary as string) ?? (updated.description as string) ?? l.description,
+          status: (updated.status as Link['status']) ?? l.status,
+          summary: (updated.summary as string) ?? l.summary,
+          tags: (updated.tags as string[]) ?? l.tags,
+          favicon: (updated.favicon_url as string) ?? l.favicon,
+          thumbnailUrl: (updated.thumbnail_url as string) ?? l.thumbnailUrl,
+        };
+      }));
+    });
+    return unsubscribe;
   }, [session, isAuthLoading]);
 
   const fetchVaultData = async () => {
     try {
-      const [fetchedLinks, fetchedCats] = await Promise.all([
-        db.links.fetchAll(),
-        db.categories.fetchAll()
+      const [items, folders] = await Promise.all([
+        api.items.fetchAll(),
+        api.folders.fetchAll(),
       ]);
-
-      let mergedCats = [...fetchedCats];
-
-      if (session) {
-        for (const initCat of INITIAL_CATEGORIES) {
-          if (!mergedCats.find(c => c.name.toLowerCase() === initCat.name.toLowerCase())) {
-            const newCat = { ...initCat, user_id: session.user.id };
-            try {
-              await db.categories.upsert(newCat);
-              mergedCats.push(newCat);
-            } catch (e) {
-              console.warn("Failed to sync default category:", initCat.name);
-            }
-          }
-        }
-      } else {
-        INITIAL_CATEGORIES.forEach(initCat => {
-          if (!mergedCats.find(c => c.name.toLowerCase() === initCat.name.toLowerCase())) {
-            mergedCats.push(initCat);
-          }
-        });
-      }
-
-      setCategories(mergedCats);
-      setLinks(fetchedLinks);
+      setCategories(folders);
+      setLinks(items.map(toLink));
     } catch (err) {
       console.error("Failed to fetch vault data:", err);
     }
@@ -109,120 +99,13 @@ const App: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    fetchTechNews();
-  }, []);
-
-  const fetchTechNews = async () => {
-    const CACHE_KEY = 'bento-news-cache';
-    const CACHE_TIME_KEY = 'bento-news-timestamp';
-    const CACHE_DURATION = 1000 * 60 * 60;
-    const cachedNews = localStorage.getItem(CACHE_KEY);
-    const cachedTime = localStorage.getItem(CACHE_TIME_KEY);
-    const now = Date.now();
-
-    if (cachedNews && cachedTime && (now - parseInt(cachedTime)) < CACHE_DURATION) {
-      try {
-        setNews(JSON.parse(cachedNews) as NewsItem[]);
-        return;
-      } catch (e) { }
+  const addLink = async (url: string, folderId?: string) => {
+    const result = await api.items.save(url, folderId);
+    if (result.duplicate) {
+      throw new Error('Already saved — this URL is in your vault.');
     }
-
-    setIsNewsLoading(true);
-    try {
-      // Use named parameter for apiKey and rely on process.env.API_KEY directly per guidelines
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: 'Get the 5 most important and recent technology news stories from today. Focus on AI, Software Engineering, and Hardware breakthroughs.',
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                summary: { type: Type.STRING },
-                url: { type: Type.STRING },
-                source: { type: Type.STRING },
-                timestamp: { type: Type.STRING }
-              },
-              required: ["title", "summary", "url", "source", "timestamp"]
-            }
-          }
-        }
-      });
-
-      const newsData = (JSON.parse(response.text || '[]') as any[]).map((item: any, i: number) => ({
-        ...item,
-        id: `news-${i}-${Date.now()}`
-      })) as NewsItem[];
-
-      setNews(newsData);
-      localStorage.setItem(CACHE_KEY, JSON.stringify(newsData));
-      localStorage.setItem(CACHE_TIME_KEY, now.toString());
-    } catch (err: any) {
-      if (cachedNews) {
-        setNews(JSON.parse(cachedNews) as NewsItem[]);
-      } else {
-        setNews([
-          { id: '1', title: 'Intelligence Synthesis Update', summary: 'Global neural network clusters reporting 15% increase in cross-modality reasoning accuracy.', url: 'https://ai.google.dev', source: 'System Intel', timestamp: 'REALTIME' },
-          { id: '2', title: 'Silicon Frontier Expansion', summary: 'New fabrication methods reducing thermal output in high-density compute nodes.', url: 'https://huggingface.co', source: 'Core Tech', timestamp: '1H AGO' }
-        ]);
-      }
-    } finally {
-      setIsNewsLoading(false);
-    }
-  };
-
-  const addLink = async (url: string, title: string, description: string, categoryName: string, icon?: string, sectionLabel?: string) => {
-    if (links.some(l => l.url.toLowerCase() === url.toLowerCase())) {
-      alert("This resource is already archived in your vault.");
-      return;
-    }
-
-    let category = categories.find(c => c.name.toLowerCase() === categoryName.toLowerCase());
-
-    if (!category) {
-      const newCategory: Category = {
-        id: `cat-${Date.now()}`,
-        name: categoryName,
-        color: CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)],
-        icon: icon || CATEGORY_ICONS[Math.floor(Math.random() * CATEGORY_ICONS.length)],
-        user_id: session?.user?.id
-      };
-
-      try {
-        await db.categories.upsert(newCategory);
-        setCategories(prev => [...prev, newCategory]);
-        category = newCategory;
-      } catch (e: any) {
-        alert(`Failed to create category: ${e.message}`);
-        return;
-      }
-    }
-
-    const newLink: Link = {
-      id: `link-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      url,
-      title,
-      description,
-      categoryId: category.id,
-      section: sectionLabel || 'General Archive',
-      createdAt: Date.now(),
-      isPinned: false,
-      user_id: session?.user?.id
-    };
-
-    try {
-      await db.links.upsert(newLink);
-      setLinks(prev => [newLink, ...prev]);
-      setIsModalOpen(false);
-    } catch (err: any) {
-      alert(`Sync Failed: ${err.message}. Please check your database tables.`);
-    }
+    const item = await api.items.fetchOne(result.id);
+    if (item) setLinks(prev => [toLink(item), ...prev]);
   };
 
   const handleLogout = async () => {
@@ -231,37 +114,31 @@ const App: React.FC = () => {
 
   const handleUpdateLink = async (id: string, updates: Partial<Link>) => {
     setLinks(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
-    const item = links.find(l => l.id === id);
-    if (item) {
-      try {
-        await db.links.upsert({ ...item, ...updates });
-      } catch (e: any) {
-        alert(`Update sync failed: ${e.message}`);
-      }
+    try {
+      await api.items.update(id, {
+        ...(updates.title !== undefined ? { title: updates.title } : {}),
+        ...(updates.description !== undefined ? { description: updates.description } : {}),
+        ...(updates.isPinned !== undefined ? { is_pinned: updates.isPinned } : {}),
+      });
+    } catch (e: any) {
+      alert(`Update sync failed: ${e.message}`);
+      fetchVaultData();
     }
   };
 
   const handleAddCategory = async (name: string, color: string, icon: string) => {
-    const newCategory: Category = {
-      id: `cat-${Date.now()}`,
-      name,
-      color,
-      icon,
-      user_id: session?.user?.id
-    };
     try {
-      await db.categories.upsert(newCategory);
-      setCategories(prev => [...prev, newCategory]);
+      const created = await api.folders.create(name, color, icon);
+      setCategories(prev => [...prev, created]);
     } catch (e: any) {
       alert(e.message);
     }
   };
 
   const handleUpdateCategory = async (id: string, name: string, color: string, icon: string) => {
-    const updated = { id, name, color, icon, user_id: session?.user?.id };
     try {
-      await db.categories.upsert(updated);
-      setCategories(prev => prev.map(c => c.id === id ? updated : c));
+      await api.folders.update(id, { name, color, icon });
+      setCategories(prev => prev.map(c => c.id === id ? { id, name, color, icon } : c));
     } catch (e: any) {
       alert(e.message);
     }
@@ -274,19 +151,13 @@ const App: React.FC = () => {
 
   const executeDeleteCategory = async (id: string) => {
     if (activeCategory === id) setActiveCategory(null);
-    const uncategorizedId = categories.find(c => c.name === 'Uncategorized')?.id || 'cat-6';
-
-    const updatedLinks = links.map(l => l.categoryId === id ? { ...l, categoryId: uncategorizedId } : l);
-
     try {
-      await db.categories.delete(id);
+      await api.folders.delete(id);
       setCategories(prev => prev.filter(c => c.id !== id));
-      setLinks(updatedLinks);
-      for (const l of updatedLinks.filter(l => l.categoryId === uncategorizedId)) {
-        await db.links.upsert(l);
-      }
+      // Items in the folder become unfiled (assignments cascade server-side)
+      setLinks(prev => prev.map(l => l.categoryId === id ? { ...l, categoryId: '' } : l));
     } catch (e: any) {
-      alert(`Failed to delete category: ${e.message}`);
+      alert(`Failed to delete folder: ${e.message}`);
     }
   };
 
@@ -299,104 +170,42 @@ const App: React.FC = () => {
     });
   };
 
-  const handleImport = async (parsedBookmarks: ParsedBookmark[], mode: 'add' | 'replace', strategy: 'fast' | 'accurate') => {
+  const handleImport = async (parsedBookmarks: ParsedBookmark[], mode: 'add' | 'replace') => {
     const uniqueInput = Array.from(new Map(parsedBookmarks.map(item => [item.url.toLowerCase(), item])).values());
-    const existingUrls = mode === 'replace' ? new Set<string>() : new Set(links.map(l => l.url.toLowerCase()));
-    const toProcess = uniqueInput.filter(b => !existingUrls.has(b.url.toLowerCase()));
+    if (uniqueInput.length === 0) return;
 
-    if (toProcess.length === 0) {
-      if (mode === 'replace') {
-        setLinks([]);
-        for (const l of links) await db.links.delete(l.id);
-      }
-      return;
-    }
-
-    const finalLinks: Link[] = mode === 'replace' ? [] : [...links];
     if (mode === 'replace') {
-      for (const l of links) await db.links.delete(l.id);
-    }
-
-    if (strategy === 'fast') {
-      const uncategorizedId = categories.find(c => c.name === 'Uncategorized')?.id || 'cat-6';
-      for (let i = 0; i < toProcess.length; i++) {
-        const b = toProcess[i];
-        const newLink = {
-          id: `link-fast-${Date.now()}-${i}`,
-          url: b.url,
-          title: b.title,
-          description: "Quick imported link",
-          categoryId: uncategorizedId,
-          section: 'General Archive',
-          createdAt: b.addDate || Date.now(),
-          isPinned: false,
-          user_id: session?.user?.id
-        };
-        finalLinks.unshift(newLink);
-        await db.links.upsert(newLink);
-      }
-      setLinks([...finalLinks]);
-      return;
-    }
-
-    setImportProgress({ current: 0, total: toProcess.length, active: true });
-    const uncategorizedId = categories.find(c => c.name === 'Uncategorized')?.id || 'cat-6';
-
-    for (let i = 0; i < toProcess.length; i++) {
-      const b = toProcess[i];
-      setImportProgress(prev => ({ ...prev, current: i + 1 }));
-
       try {
-        const result = await analyzeLink(b.url, categories.map(c => c.name));
-        let targetCategory = categories.find(c => c.name.toLowerCase() === result.categoryName.toLowerCase());
-
-        if (!targetCategory) {
-          const newCat: Category = {
-            id: `cat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            name: result.categoryName,
-            color: CATEGORY_COLORS[Math.floor(Math.random() * CATEGORY_COLORS.length)],
-            icon: result.categoryIcon,
-            user_id: session?.user?.id
-          };
-          await db.categories.upsert(newCat);
-          setCategories(prev => [...prev, newCat]);
-          targetCategory = newCat;
-        }
-
-        const newLink = {
-          id: `link-import-${Date.now()}-${i}`,
-          url: b.url,
-          title: result.suggestedTitle || b.title,
-          description: result.suggestedDescription,
-          categoryId: targetCategory.id,
-          section: result.suggestedSection || 'General Archive',
-          createdAt: b.addDate || Date.now(),
-          isPinned: false,
-          user_id: session?.user?.id
-        };
-        finalLinks.unshift(newLink);
-        await db.links.upsert(newLink);
-
-        await new Promise(r => setTimeout(r, 7000));
-        if (i % 5 === 0 || i === toProcess.length - 1) setLinks([...finalLinks]);
-      } catch (err) {
-        const fallback = {
-          id: `link-import-${Date.now()}-${i}`,
-          url: b.url,
-          title: b.title,
-          description: "Imported link (AI analysis skipped)",
-          categoryId: uncategorizedId,
-          section: 'General Archive',
-          createdAt: b.addDate || Date.now(),
-          isPinned: false,
-          user_id: session?.user?.id
-        };
-        finalLinks.unshift(fallback);
-        await db.links.upsert(fallback).catch(() => { });
-        setLinks([...finalLinks]);
+        await api.items.deleteAll();
+        setLinks([]);
+      } catch (e: any) {
+        alert(`Failed to clear vault: ${e.message}`);
+        return;
       }
     }
+
+    const urls = uniqueInput.map(b => b.url);
+    const BATCH = 100;
+    const totalBatches = Math.ceil(urls.length / BATCH);
+    setImportProgress({ current: 0, total: urls.length, active: true });
+
+    let imported = 0;
+    for (let i = 0; i < totalBatches; i++) {
+      const slice = urls.slice(i * BATCH, (i + 1) * BATCH);
+      try {
+        const results = await api.items.saveBatch(slice);
+        imported += results.filter(r => !r.error && !r.duplicate).length;
+      } catch (e) {
+        console.error(`Import batch ${i + 1}/${totalBatches} failed:`, e);
+      }
+      setImportProgress(prev => ({ ...prev, current: Math.min((i + 1) * BATCH, urls.length) }));
+    }
+
     setImportProgress({ current: 0, total: 0, active: false });
+    await fetchVaultData();
+    if (imported < urls.length) {
+      console.info(`Import: ${imported} new, ${urls.length - imported} duplicates/errors skipped.`);
+    }
   };
 
   const confirmDeleteLink = (id: string) => {
@@ -406,7 +215,7 @@ const App: React.FC = () => {
 
   const executeDeleteLink = async (id: string) => {
     try {
-      await db.links.delete(id);
+      await api.items.delete(id);
       setLinks(prev => prev.filter(l => l.id !== id));
     } catch (e: any) {
       alert(`Delete failed: ${e.message}`);
@@ -414,28 +223,25 @@ const App: React.FC = () => {
   };
 
   const togglePin = async (id: string) => {
-    const updated = links.map(l => l.id === id ? { ...l, isPinned: !l.isPinned } : l);
-    const item = updated.find(l => l.id === id);
-    if (item) {
-      try {
-        await db.links.upsert(item);
-        setLinks(updated);
-      } catch (e: any) {
-        alert(e.message);
-      }
+    const item = links.find(l => l.id === id);
+    if (!item) return;
+    const next = !item.isPinned;
+    setLinks(prev => prev.map(l => l.id === id ? { ...l, isPinned: next } : l));
+    try {
+      await api.items.update(id, { is_pinned: next });
+    } catch (e: any) {
+      alert(e.message);
+      setLinks(prev => prev.map(l => l.id === id ? { ...l, isPinned: !next } : l));
     }
   };
 
   const handleCategoryChange = async (linkId: string, categoryId: string) => {
-    const updated = links.map(l => l.id === linkId ? { ...l, categoryId } : l);
-    const item = updated.find(l => l.id === linkId);
-    if (item) {
-      try {
-        await db.links.upsert(item);
-        setLinks(updated);
-      } catch (e: any) {
-        alert(e.message);
-      }
+    setLinks(prev => prev.map(l => l.id === linkId ? { ...l, categoryId } : l));
+    try {
+      await api.items.setFolder(linkId, categoryId || null);
+    } catch (e: any) {
+      alert(e.message);
+      fetchVaultData();
     }
   };
 
@@ -491,10 +297,13 @@ const App: React.FC = () => {
     }
   };
 
-  // Fix: Adding explicit generic type to useMemo to ensure it's typed as Link[] and not unknown
   const pinnedLinks = useMemo<Link[]>(() => links.filter(l => l.isPinned), [links]);
 
-  // Fix: Adding explicit generic type to useMemo to ensure it's typed as Link[] and not unknown
+  const processingLinks = useMemo<Link[]>(
+    () => links.filter(l => l.status === 'pending' || l.status === 'parsing' || l.status === 'enriching'),
+    [links]
+  );
+
   const sortedLinks = useMemo<Link[]>(() => {
     let result = [...links];
     if (sortBy === 'date') result.sort((a, b) => b.createdAt - a.createdAt);
@@ -502,18 +311,18 @@ const App: React.FC = () => {
     return result;
   }, [links, sortBy]);
 
-  // Fix: Adding explicit generic type to useMemo to ensure filteredLinks is typed correctly
   const filteredLinks = useMemo<Link[]>(() => {
+    const q = searchQuery.toLowerCase();
     return sortedLinks.filter(link => {
-      const matchesSearch = link.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        link.url.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = link.title.toLowerCase().includes(q) ||
+        link.url.toLowerCase().includes(q) ||
+        (link.summary || '').toLowerCase().includes(q) ||
+        (link.tags || []).some(t => t.includes(q));
       const matchesCategory = activeCategory ? link.categoryId === activeCategory : true;
       return matchesSearch && matchesCategory;
     });
   }, [sortedLinks, searchQuery, activeCategory]);
 
-  // Grouping logic for the active category
-  // Fix: Adding explicit generic type to useMemo to avoid unknown type issues when grouped
   const linksBySection = useMemo<Record<string, Link[]> | null>(() => {
     if (!activeCategory) return null;
     const groups: Record<string, Link[]> = {};
@@ -527,9 +336,9 @@ const App: React.FC = () => {
 
   const stats = useMemo(() => ({
     total: links.length,
-    ai: links.filter(l => categories.find(c => c.id === l.categoryId)?.name === 'AI Tools').length,
-    recent: links.filter(l => Date.now() - l.createdAt < 86400000).length
-  }), [links, categories]);
+    enriched: links.filter(l => !!l.summary).length,
+    processing: processingLinks.length,
+  }), [links, processingLinks]);
 
   const formattedTime = currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
   const formattedDate = currentTime.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -560,8 +369,8 @@ const App: React.FC = () => {
             if (deleteTarget.type === 'link') executeDeleteLink(deleteTarget.id);
             else executeDeleteCategory(deleteTarget.id);
           }}
-          title={`Delete ${deleteTarget.type === 'link' ? 'Resource' : 'Segment'}`}
-          message={deleteTarget.type === 'link' ? `Delete "${deleteTarget.name}" permanently?` : `Delete segment "${deleteTarget.name}"? Links will be moved to Uncategorized.`}
+          title={`Delete ${deleteTarget.type === 'link' ? 'Resource' : 'Folder'}`}
+          message={deleteTarget.type === 'link' ? `Delete "${deleteTarget.name}" permanently?` : `Delete folder "${deleteTarget.name}"? Items will become unfiled.`}
         />
       )}
 
@@ -629,11 +438,39 @@ const App: React.FC = () => {
                     <div className="flex items-center gap-4 py-3 px-6 bg-white/[0.03] border border-white/[0.05] rounded-2xl">
                       <div className="flex flex-col"><span className="text-[9px] font-black text-zinc-500 uppercase">Records</span><span className="text-2xl font-black">{stats.total}</span></div>
                       <div className="w-px h-8 bg-white/10"></div>
-                      <div className="flex flex-col"><span className="text-[9px] font-black text-zinc-500 uppercase">AI Sorted</span><span className="text-2xl font-black text-zinc-400">{stats.ai}</span></div>
+                      <div className="flex flex-col"><span className="text-[9px] font-black text-zinc-500 uppercase">AI Enriched</span><span className="text-2xl font-black text-zinc-400">{stats.enriched}</span></div>
                     </div>
                   </div>
                 </div>
-                <div className="w-1/2 relative bg-zinc-900/30"><NewsCarousel news={news} isLoading={isNewsLoading} /></div>
+                <div className="w-1/2 relative bg-zinc-900/30 p-8 flex flex-col">
+                  <div className="flex items-center justify-between mb-6">
+                    <p className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em]">AI Pipeline</p>
+                    {stats.processing > 0 && (
+                      <span className="px-3 py-1 bg-[#c1ff00]/10 border border-[#c1ff00]/30 rounded-full text-[9px] font-black text-[#c1ff00] uppercase tracking-widest flex items-center gap-2">
+                        <i className="fa-solid fa-spinner fa-spin text-[9px]"></i>
+                        {stats.processing} processing
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-grow overflow-y-auto no-scrollbar space-y-3">
+                    {processingLinks.length > 0 ? (
+                      processingLinks.slice(0, 6).map(link => (
+                        <div key={`pipe-${link.id}`} className="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/[0.05] rounded-xl">
+                          <i className="fa-solid fa-spinner fa-spin text-[#c1ff00] text-xs shrink-0"></i>
+                          <div className="min-w-0 flex-grow">
+                            <p className="text-[11px] font-bold text-zinc-300 truncate">{link.title}</p>
+                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-600">{link.status === 'pending' ? 'Queued' : link.status === 'parsing' ? 'Reading content' : 'AI analysis'}</p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="h-full flex flex-col items-center justify-center text-center space-y-3 opacity-30">
+                        <i className="fa-solid fa-circle-check text-2xl text-zinc-600"></i>
+                        <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Pipeline idle — all items processed</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Priority Vault Card - Grid Style */}
@@ -666,7 +503,7 @@ const App: React.FC = () => {
                       >
                         <div className="w-[34px] h-[34px] rounded-xl bg-zinc-900 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 shadow-lg mb-2">
                           <img
-                            src={`https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
+                            src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
                             alt=""
                             className="w-5 h-5 object-contain"
                             onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=18181b&color=fff`)}
@@ -758,7 +595,7 @@ const App: React.FC = () => {
                         <i className="fa-solid fa-box-open text-4xl text-zinc-800"></i>
                         <div className="space-y-1">
                           <p className="text-zinc-500 font-black uppercase tracking-widest text-xs">The vault is empty</p>
-                          <p className="text-zinc-700 text-[10px] font-bold">Start adding resources to sync them to your Supabase project.</p>
+                          <p className="text-zinc-700 text-[10px] font-bold">Save a URL and the AI pipeline will parse, summarize and tag it.</p>
                         </div>
                       </div>
                     )}

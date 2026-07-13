@@ -1,7 +1,6 @@
 
-import React, { useState } from 'react';
-import { Link, Category } from '../types';
-import { analyzeLink } from '../services/geminiService';
+import React from 'react';
+import { Link, Category, ItemStatus } from '../types';
 
 interface LinkCardProps {
   link: Link;
@@ -13,48 +12,36 @@ interface LinkCardProps {
   onUpdateLink?: (linkId: string, updates: Partial<Link>) => void;
 }
 
-const LinkCard: React.FC<LinkCardProps> = ({ 
-  link, 
-  category, 
-  categories = [], 
-  onDelete, 
+const STATUS_META: Record<ItemStatus, { label: string; className: string; spin?: boolean }> = {
+  pending:   { label: 'Queued',     className: 'text-zinc-400 border-zinc-600/40 bg-zinc-600/10', spin: true },
+  parsing:   { label: 'Reading',    className: 'text-blue-300 border-blue-500/30 bg-blue-500/10', spin: true },
+  enriching: { label: 'AI Analysis', className: 'text-[#c1ff00] border-[#c1ff00]/30 bg-[#c1ff00]/10', spin: true },
+  ready:     { label: 'Ready',      className: '' },
+  degraded:  { label: 'Limited data', className: 'text-amber-300 border-amber-500/30 bg-amber-500/10' },
+  failed:    { label: 'Failed',     className: 'text-red-400 border-red-500/30 bg-red-500/10' },
+};
+
+const LinkCard: React.FC<LinkCardProps> = ({
+  link,
+  category,
+  categories = [],
+  onDelete,
   onTogglePin,
   onChangeCategory,
-  onUpdateLink
 }) => {
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
   const domain = new URL(link.url).hostname;
   const isAI = category?.name === 'AI Tools';
-
-  const handleAIAnalyze = async () => {
-    if (isGenerating) return;
-    setIsGenerating(true);
-    setAiError(null);
-    try {
-      const result = await analyzeLink(link.url, categories.map(c => c.name));
-      if (onUpdateLink) {
-        onUpdateLink(link.id, {
-          title: result.suggestedTitle || link.title,
-          description: result.suggestedDescription || link.description
-        });
-      }
-    } catch (err: any) {
-      console.error("AI Refresh failed:", err);
-      setAiError(err?.message || "AI refresh failed.");
-    } finally {
-      setIsGenerating(false);
-    }
-  };
+  const status = link.status && link.status !== 'ready' ? STATUS_META[link.status] : null;
+  const isProcessing = !!status?.spin;
 
   return (
     <div className="group relative bg-[#151518] border border-white/[0.04] rounded-[1.5rem] p-5 transition-all duration-300 hover:bg-[#1a1a1e] hover:border-white/10 flex flex-col h-full shadow-lg">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl flex items-center justify-center overflow-hidden border border-white/5 bg-zinc-900 shadow-inner group-hover:border-[#c1ff00]/30 transition-colors">
-            <img 
-              src={`https://www.google.com/s2/favicons?sz=64&domain=${link.url}`} 
-              alt="favicon" 
+            <img
+              src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
+              alt="favicon"
               className="w-7 h-7 object-contain"
               onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=18181b&color=fff`)}
             />
@@ -69,14 +56,14 @@ const LinkCard: React.FC<LinkCardProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-          <button 
+          <button
             onClick={(e) => { e.preventDefault(); onTogglePin?.(link.id); }}
             className={`p-2 transition-all rounded-full hover:bg-white/5 ${link.isPinned ? 'text-[#c1ff00]' : 'text-zinc-600 hover:text-white'}`}
             title="Pin Link"
           >
             <i className={`fa-solid fa-thumbtack text-xs ${link.isPinned ? '' : 'opacity-50'}`}></i>
           </button>
-          <button 
+          <button
             onClick={(e) => { e.preventDefault(); onDelete(link.id); }}
             className="p-2 text-zinc-600 hover:text-red-400 transition-all rounded-full hover:bg-red-400/10"
             title="Delete Link"
@@ -86,11 +73,25 @@ const LinkCard: React.FC<LinkCardProps> = ({
         </div>
       </div>
 
-      <p className="text-zinc-400 text-xs line-clamp-2 leading-relaxed mb-4 flex-grow">
-        {link.description || 'No detailed description found for this resource.'}
+      {status && (
+        <div className={`inline-flex items-center gap-2 self-start px-3 py-1 mb-3 rounded-full border text-[9px] font-black uppercase tracking-widest ${status.className}`}>
+          {isProcessing && <i className="fa-solid fa-spinner fa-spin text-[9px]"></i>}
+          {status.label}
+        </div>
+      )}
+
+      <p className="text-zinc-400 text-xs line-clamp-2 leading-relaxed mb-3 flex-grow">
+        {link.description || (isProcessing ? 'Fetching content and generating AI summary…' : 'No description available for this resource.')}
       </p>
-      {aiError && (
-        <p className="text-red-400 text-[10px] mb-2 px-1">{aiError}</p>
+
+      {link.tags && link.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          {link.tags.slice(0, 4).map((tag) => (
+            <span key={tag} className="px-2 py-0.5 bg-white/[0.04] border border-white/[0.06] rounded-full text-[9px] font-bold text-zinc-500 lowercase tracking-wide">
+              {tag}
+            </span>
+          ))}
+        </div>
       )}
 
       <div className="flex items-center justify-between pt-4 border-t border-white/[0.04]">
@@ -102,6 +103,7 @@ const LinkCard: React.FC<LinkCardProps> = ({
               onChange={(e) => onChangeCategory?.(link.id, e.target.value)}
               className="bg-transparent text-[10px] text-zinc-500 font-bold uppercase tracking-wider focus:outline-none cursor-pointer hover:text-white transition-colors w-full appearance-none"
             >
+              <option value="" className="bg-[#151518] text-white">Unfiled</option>
               {categories.map(cat => (
                 <option key={cat.id} value={cat.id} className="bg-[#151518] text-white">
                   {cat.name}
@@ -110,23 +112,11 @@ const LinkCard: React.FC<LinkCardProps> = ({
             </select>
           </div>
         </div>
-        
+
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={handleAIAnalyze}
-            disabled={isGenerating}
-            title="AI Refresh (Title & Description)"
-            className="w-8 h-8 flex items-center justify-center bg-white/5 text-zinc-400 hover:text-[#c1ff00] hover:bg-white/10 rounded-full transition-all border border-white/5 disabled:opacity-50 shadow-sm"
-          >
-            {isGenerating ? (
-              <i className="fa-solid fa-spinner fa-spin text-[10px]"></i>
-            ) : (
-              <i className="fa-solid fa-wand-magic-sparkles text-[10px]"></i>
-            )}
-          </button>
-          <a 
-            href={link.url} 
-            target="_blank" 
+          <a
+            href={link.url}
+            target="_blank"
             rel="noopener noreferrer"
             className="bg-zinc-800/80 text-white hover:bg-[#c1ff00] hover:text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20"
           >

@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Personal data exports (repo is public)
+backups/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

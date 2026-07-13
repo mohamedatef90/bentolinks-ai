@@ -1,6 +1,15 @@
 
 import React, { useState, useEffect } from 'react';
-import { supabase, isSupabaseConfigured, testSupabaseConnection } from '../services/supabase';
+import { supabase } from '../services/supabase';
+
+const testSupabaseConnection = async (): Promise<boolean> => {
+  try {
+    const { error } = await supabase.auth.getSession();
+    return !error;
+  } catch {
+    return false;
+  }
+};
 
 const AuthView: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -29,11 +38,6 @@ const AuthView: React.FC = () => {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isSupabaseConfigured) {
-      setError("Cloud services are currently offline. Local Mode is active.");
-      return;
-    }
-    
     setLoading(true);
     setError(null);
 
