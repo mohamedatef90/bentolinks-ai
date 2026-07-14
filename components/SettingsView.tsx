@@ -83,7 +83,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
               <i className="fa-solid fa-folder-tree"></i>
               Manage Segments
             </div>
-            <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Drag items to reorder</span>
+            <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Drag items to reorder</span>
           </div>
           
           <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 no-scrollbar">
@@ -148,7 +148,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 value={catName}
                 onChange={(e) => setCatName(e.target.value)}
                 placeholder="Category Name"
-                className="w-full bg-zinc-900/50 border border-white/5 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:ring-1 focus:ring-neon-accent transition-all font-bold"
+                className="w-full bg-[#0A1320]/50 border border-white/5 rounded-2xl px-6 py-4 text-sm focus:outline-none focus:ring-1 focus:ring-neon-accent transition-all font-bold"
               />
               <div className="flex flex-wrap gap-3">
                 {CATEGORY_COLORS.map(color => (
@@ -230,7 +230,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
             </button>
           </div>
 
-          <div className="p-8 bg-zinc-900/50 rounded-3xl border border-white/5">
+          <div className="p-8 bg-[#0A1320]/50 rounded-3xl border border-white/5">
              <p className="text-[11px] text-zinc-500 font-bold leading-relaxed">
                <i className="fa-solid fa-circle-info mr-2 text-neon-accent"></i>
                Theme preferences are stored locally and will persist across sessions on this device.

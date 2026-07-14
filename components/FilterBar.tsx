@@ -62,7 +62,7 @@ const FilterBar: React.FC<FilterBarProps> = ({ filter, onChange, availableTags, 
         ))}
         <button onClick={() => onChange({ ...filter, is_starred: !filter.is_starred || undefined })}
           className={chipClass(!!filter.is_starred)}>
-          <i className="fa-solid fa-star mr-1.5 text-[9px]"></i>Starred
+          <i className="fa-solid fa-star mr-1.5 text-[10px]"></i>Starred
         </button>
 
         {availableTopics.length > 0 && (
@@ -91,7 +91,7 @@ const FilterBar: React.FC<FilterBarProps> = ({ filter, onChange, availableTags, 
                 onClick={() => setSavingName('')}
                 className="px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10 transition-all whitespace-nowrap"
               >
-                <i className="fa-solid fa-bookmark mr-1.5 text-[9px]"></i>Save as Smart Collection
+                <i className="fa-solid fa-bookmark mr-1.5 text-[10px]"></i>Save as Smart Collection
               </button>
             ) : (
               <form onSubmit={submitSave} className="flex items-center gap-2">
@@ -115,7 +115,7 @@ const FilterBar: React.FC<FilterBarProps> = ({ filter, onChange, availableTags, 
         <div className="flex flex-wrap items-center gap-2">
           {availableTags.slice(0, 24).map(tag => (
             <button key={tag} onClick={() => onChange({ ...filter, tags: toggleInArray(filter.tags, tag) })}
-              className={`px-3 py-1 rounded-full text-[9px] font-bold lowercase tracking-wide transition-all ${
+              className={`px-3 py-1 rounded-full text-[10px] font-bold lowercase tracking-wide transition-all ${
                 filter.tags?.includes(tag) ? 'bg-neon-accent text-black' : 'bg-white/[0.04] text-zinc-500 hover:text-white'
               }`}>
               #{tag}

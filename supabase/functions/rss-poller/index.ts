@@ -128,6 +128,7 @@ async function pollSubscription(db: SupabaseClient, sub: Subscription): Promise<
         canonical_url: entry.canonical,
         source_type: 'rss',
         status: 'pending',
+        saved_via: 'rss',
         title: entry.title,
         description: entry.description,
         published_at: entry.published_at,

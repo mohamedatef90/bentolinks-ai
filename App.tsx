@@ -16,9 +16,16 @@ import FeedsView from './views/FeedsView';
 import { ParsedBookmark } from './services/bookmarkService';
 import { supabase } from './services/supabase';
 import { api, toLink } from './services/api';
+import { Reveal, CountUp, spotlight, CursorGlow, Starfield } from './components/magic';
 import { Session, AuthChangeEvent } from '@supabase/supabase-js';
 
-type SortOption = 'date' | 'name' | 'custom';
+/** Compact relative time for feed rows: 5m, 3h, 2d. */
+const timeAgo = (ts: number): string => {
+  const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+};
 
 interface LibraryLayoutProps {
   folders: Folder[];
@@ -31,8 +38,34 @@ interface LibraryLayoutProps {
  * App's frequent re-renders (e.g. the once-a-second clock tick) — otherwise React would
  * remount this subtree on every tick and the child view's data fetch would never finish. */
 const LibraryLayout: React.FC<LibraryLayoutProps> = ({ folders, smartCollections, onDeleteSmartCollection, children }) => (
-  <div className="flex gap-8 items-start">
-    <FolderSidebar folders={folders} smartCollections={smartCollections} onDeleteSmartCollection={onDeleteSmartCollection} />
+  <div className="lg:flex gap-8 items-start">
+    {/* Full sidebar on desktop */}
+    <div className="hidden lg:block">
+      <FolderSidebar folders={folders} smartCollections={smartCollections} onDeleteSmartCollection={onDeleteSmartCollection} />
+    </div>
+    {/* Collections + folders collapse into a chip scroller on mobile */}
+    <div className="lg:hidden -mx-6 px-6 mb-6 flex gap-2 overflow-x-auto no-scrollbar">
+      {smartCollections.map(c => (
+        <NavLink
+          key={`chip-${c.id}`}
+          to={`/collection/${c.id}`}
+          className={({ isActive }) => `whitespace-nowrap px-4 py-2.5 rounded-full border text-[10px] font-black uppercase tracking-widest transition-all ${isActive ? 'text-black border-transparent' : 'text-zinc-400 border-white/[0.06] bg-white/[0.03]'}`}
+          style={({ isActive }) => isActive ? { background: 'var(--grad)' } : undefined}
+        >
+          {c.icon ? `${c.icon} ` : ''}{c.name}
+        </NavLink>
+      ))}
+      {folders.filter(f => !f.parent_id).map(f => (
+        <NavLink
+          key={`chip-${f.id}`}
+          to={`/folder/${f.id}`}
+          className={({ isActive }) => `whitespace-nowrap px-4 py-2.5 rounded-full border text-[10px] font-black uppercase tracking-widest transition-all ${isActive ? 'text-black border-transparent' : 'text-zinc-400 border-white/[0.06] bg-white/[0.03]'}`}
+          style={({ isActive }) => isActive ? { background: 'var(--grad)' } : undefined}
+        >
+          {f.name}
+        </NavLink>
+      ))}
+    </div>
     <div className="flex-grow min-w-0">{children}</div>
   </div>
 );
@@ -47,22 +80,19 @@ const App: React.FC = () => {
   });
 
   const [links, setLinks] = useState<Link[]>([]);
+  const [isVaultLoading, setIsVaultLoading] = useState(true);
+  const [dailyPicks, setDailyPicks] = useState<Link[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [smartCollections, setSmartCollections] = useState<SmartCollection[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<SortOption>('date');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [draggedLinkId, setDraggedLinkId] = useState<string | null>(null);
   const [draggedPinnedId, setDraggedPinnedId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
 
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'link' | 'category', id: string, name: string } | null>(null);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, active: false });
-
-  const categoryScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -114,6 +144,15 @@ const App: React.FC = () => {
       setLinks(items.map(toLink));
     } catch (err) {
       console.error("Failed to fetch vault data:", err);
+    } finally {
+      setIsVaultLoading(false);
+    }
+    // Today's Picks (nightly Resurface set) — non-critical, loads after the main data.
+    try {
+      const picks = await api.items.fetchByFilter({ system: 'resurface' } as any);
+      setDailyPicks(picks.map(toLink));
+    } catch {
+      setDailyPicks([]);
     }
   };
 
@@ -148,7 +187,8 @@ const App: React.FC = () => {
   }, [theme]);
 
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    // Clock shows HH:MM — a 30s tick is plenty and avoids re-rendering the app every second.
+    const timer = setInterval(() => setCurrentTime(new Date()), 30_000);
     return () => clearInterval(timer);
   }, []);
 
@@ -205,7 +245,6 @@ const App: React.FC = () => {
   };
 
   const executeDeleteCategory = async (id: string) => {
-    if (activeCategory === id) setActiveCategory(null);
     try {
       await api.folders.delete(id);
       setCategories(prev => prev.filter(c => c.id !== id));
@@ -291,6 +330,37 @@ const App: React.FC = () => {
     }
   };
 
+  const toggleStarLink = async (id: string) => {
+    const item = links.find(l => l.id === id);
+    if (!item) return;
+    const next = !item.isStarred;
+    setLinks(prev => prev.map(l => l.id === id ? { ...l, isStarred: next } : l));
+    try {
+      await api.items.setStarred(id, next);
+    } catch (e: any) {
+      alert(e.message);
+      setLinks(prev => prev.map(l => l.id === id ? { ...l, isStarred: !next } : l));
+    }
+  };
+
+  const READ_CYCLE: Record<string, 'unread' | 'reading' | 'read'> = {
+    unread: 'reading', reading: 'read', read: 'unread',
+  };
+
+  const cycleReadStatusLink = async (id: string) => {
+    const item = links.find(l => l.id === id);
+    if (!item) return;
+    const prevStatus = item.readStatus ?? 'unread';
+    const next = READ_CYCLE[prevStatus];
+    setLinks(prev => prev.map(l => l.id === id ? { ...l, readStatus: next } : l));
+    try {
+      await api.items.setReadStatus(id, next);
+    } catch (e: any) {
+      alert(e.message);
+      setLinks(prev => prev.map(l => l.id === id ? { ...l, readStatus: prevStatus } : l));
+    }
+  };
+
   const handleCategoryChange = async (linkId: string, categoryId: string) => {
     setLinks(prev => prev.map(l => l.id === linkId ? { ...l, categoryId } : l));
     try {
@@ -299,30 +369,6 @@ const App: React.FC = () => {
       alert(e.message);
       fetchVaultData();
     }
-  };
-
-  const handleDragStart = (id: string) => {
-    if (sortBy !== 'custom') return;
-    setDraggedLinkId(id);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    if (sortBy !== 'custom') return;
-    e.preventDefault();
-  };
-
-  const handleDrop = (targetId: string) => {
-    if (sortBy !== 'custom' || !draggedLinkId || draggedLinkId === targetId) return;
-    setLinks(prev => {
-      const newLinks = [...prev];
-      const draggedIdx = newLinks.findIndex(l => l.id === draggedLinkId);
-      const targetIdx = newLinks.findIndex(l => l.id === targetId);
-      if (draggedIdx === -1 || targetIdx === -1) return prev;
-      const [removed] = newLinks.splice(draggedIdx, 1);
-      newLinks.splice(targetIdx, 0, removed);
-      return newLinks;
-    });
-    setDraggedLinkId(null);
   };
 
   const handlePinnedDragStart = (id: string) => {
@@ -343,58 +389,78 @@ const App: React.FC = () => {
     setDraggedPinnedId(null);
   };
 
-  const scrollCategories = (direction: 'left' | 'right') => {
-    if (categoryScrollRef.current) {
-      const scrollAmount = 300;
-      categoryScrollRef.current.scrollBy({
-        left: direction === 'left' ? -scrollAmount : scrollAmount,
-        behavior: 'smooth'
-      });
-    }
-  };
+  // The home grid ("Primary Feed") shows only bookmarked URLs — RSS articles
+  // live in /feeds, the Library and the RSS collection.
+  const vaultLinks = useMemo<Link[]>(() => links.filter(l => l.sourceType !== 'rss'), [links]);
 
-  const pinnedLinks = useMemo<Link[]>(() => links.filter(l => l.isPinned), [links]);
+  const feedLinks = useMemo<Link[]>(
+    () => links.filter(l => l.sourceType === 'rss').slice(0, 8),
+    [links]
+  );
+
+  const phoneLinks = useMemo<Link[]>(
+    () => vaultLinks.filter(l => l.savedVia === 'mobile').slice(0, 8),
+    [vaultLinks]
+  );
+
+  const mobileCollectionId = useMemo(
+    () => smartCollections.find(c => c.query?.system === 'mobile')?.id,
+    [smartCollections]
+  );
+
+  const pinnedLinks = useMemo<Link[]>(() => vaultLinks.filter(l => l.isPinned), [vaultLinks]);
 
   const processingLinks = useMemo<Link[]>(
     () => links.filter(l => l.status === 'pending' || l.status === 'parsing' || l.status === 'enriching'),
     [links]
   );
 
-  const sortedLinks = useMemo<Link[]>(() => {
-    let result = [...links];
-    if (sortBy === 'date') result.sort((a, b) => b.createdAt - a.createdAt);
-    else if (sortBy === 'name') result.sort((a, b) => a.title.localeCompare(b.title));
-    return result;
-  }, [links, sortBy]);
+  // Home is a daily briefing: capped, purposeful sections. The full archive lives in /library.
+  const searchMatches = useMemo<Link[]>(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return vaultLinks.filter(link =>
+      link.title.toLowerCase().includes(q) ||
+      link.url.toLowerCase().includes(q) ||
+      (link.summary || '').toLowerCase().includes(q) ||
+      (link.tags || []).some(t => t.includes(q))
+    );
+  }, [vaultLinks, searchQuery]);
 
-  const filteredLinks = useMemo<Link[]>(() => {
-    const q = searchQuery.toLowerCase();
-    return sortedLinks.filter(link => {
-      const matchesSearch = link.title.toLowerCase().includes(q) ||
-        link.url.toLowerCase().includes(q) ||
-        (link.summary || '').toLowerCase().includes(q) ||
-        (link.tags || []).some(t => t.includes(q));
-      const matchesCategory = activeCategory ? link.categoryId === activeCategory : true;
-      return matchesSearch && matchesCategory;
-    });
-  }, [sortedLinks, searchQuery, activeCategory]);
+  const continueReading = useMemo<Link[]>(
+    () => vaultLinks.filter(l => l.readStatus === 'reading').slice(0, 6),
+    [vaultLinks]
+  );
 
-  const linksBySection = useMemo<Record<string, Link[]> | null>(() => {
-    if (!activeCategory) return null;
-    const groups: Record<string, Link[]> = {};
-    filteredLinks.forEach(link => {
-      const sec = link.section || 'General Archive';
-      if (!groups[sec]) groups[sec] = [];
-      groups[sec].push(link);
-    });
-    return groups;
-  }, [filteredLinks, activeCategory]);
+  const recentlySaved = useMemo<Link[]>(() => vaultLinks.slice(0, 12), [vaultLinks]);
+
+  const queueCollectionId = useMemo(
+    () => smartCollections.find(c => c.query?.system === 'queue')?.id,
+    [smartCollections]
+  );
+
+  const resurfaceCollectionId = useMemo(
+    () => smartCollections.find(c => c.query?.system === 'resurface')?.id,
+    [smartCollections]
+  );
 
   const stats = useMemo(() => ({
-    total: links.length,
-    enriched: links.filter(l => !!l.summary).length,
+    total: vaultLinks.length,
+    // "AI enriched: 0" read as broken (legacy items are intentionally unenriched) —
+    // unread + this-week are actionable numbers instead.
+    unread: vaultLinks.filter(l => (l.readStatus ?? 'unread') === 'unread').length,
+    thisWeek: vaultLinks.filter(l => Date.now() - l.createdAt < 7 * 86_400_000).length,
+    feeds: links.filter(l => l.sourceType === 'rss').length,
     processing: processingLinks.length,
-  }), [links, processingLinks]);
+  }), [links, vaultLinks, processingLinks]);
+
+  const greeting = useMemo(() => {
+    const h = currentTime.getHours();
+    if (h < 5) return 'Working late';
+    if (h < 12) return 'Good morning';
+    if (h < 18) return 'Good afternoon';
+    return 'Good evening';
+  }, [currentTime]);
 
   const formattedTime = currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
   const formattedDate = currentTime.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -411,7 +477,7 @@ const App: React.FC = () => {
 
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen bg-[#0c0c0e] flex items-center justify-center">
+      <div className="min-h-screen bg-[#0A1320] flex items-center justify-center">
         <div className="flex flex-col items-center gap-6">
           <div className="w-16 h-16 border-4 border-neon-accent/10 border-t-neon-accent rounded-full animate-spin"></div>
           <span className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500 animate-pulse">Initializing Vault Protocol</span>
@@ -420,10 +486,11 @@ const App: React.FC = () => {
     );
   }
 
-  if (!session) return <AuthView />;
+  if (!session) return <><Starfield /><AuthView /></>;
 
   return (
     <div className="min-h-screen selection:bg-neon-accent selection:text-black">
+      {theme === 'default' && <><Starfield /><CursorGlow /></>}
       <ProgressModal current={importProgress.current} total={importProgress.total} isComplete={!importProgress.active} />
 
       {deleteTarget && (
@@ -440,35 +507,36 @@ const App: React.FC = () => {
         />
       )}
 
-      <nav className="h-20 flex items-center justify-between px-6 lg:px-12 sticky top-0 bg-[#0c0c0e]/80 backdrop-blur-xl z-40 border-b border-white/[0.02]">
+      <nav className="h-20 flex items-center justify-between px-6 lg:px-12 sticky top-0 bg-[#0A1320]/75 backdrop-blur-xl z-40 border-b border-white/[0.04]">
         <div className="flex items-center gap-12">
-          <NavLink to="/" className="flex items-center gap-3 group cursor-pointer" onClick={() => setActiveCategory(null)}>
+          <NavLink to="/" className="flex items-center gap-3 group cursor-pointer">
             <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center rotate-3 group-hover:rotate-0 transition-transform duration-300 overflow-hidden p-1 shadow-lg border border-white/10">
               <img src="https://i.postimg.cc/L5YGmDmQ/0058ae6839e5283293bcada1598f2309.jpg" alt="Logo" className="w-full h-full object-contain rounded-lg" />
             </div>
-            <span className="font-extrabold text-xl tracking-tighter uppercase">BentoLinks</span>
+            <span className="hidden sm:inline font-extrabold text-xl tracking-tighter uppercase">BentoLinks</span>
           </NavLink>
-          <div className="hidden lg:flex items-center bg-[#151518] border border-white/[0.04] rounded-full p-1.5 shadow-xl">
-            <NavLink to="/" end onClick={() => setActiveCategory(null)} className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Vault Hub</NavLink>
+          <div className="hidden lg:flex items-center bg-[#0D1B2B] border border-white/[0.04] rounded-full p-1.5 shadow-xl">
+            <NavLink to="/" end className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Vault Hub</NavLink>
             <NavLink to="/library" className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Library</NavLink>
+            <NavLink to="/feeds" className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Feeds</NavLink>
             <NavLink to="/settings" className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Configuration</NavLink>
           </div>
         </div>
 
-        <div className="flex items-center gap-8">
-          <div className="relative w-64 xl:w-80 group">
+        <div className="flex items-center gap-3 md:gap-8 flex-1 justify-end min-w-0">
+          <div className="relative flex-1 max-w-[16rem] md:flex-none md:w-64 xl:w-80 group min-w-0">
             <i className="fa-solid fa-magnifying-glass absolute left-5 top-1/2 -translate-y-1/2 text-zinc-600 text-[10px] group-focus-within:text-neon-accent"></i>
             <input type="text" placeholder="GLOBAL SEARCH..." className="w-full bg-white/5 border border-white/5 rounded-full py-3 pl-12 pr-5 focus:outline-none focus:ring-1 focus:ring-neon-accent transition-all text-[10px] font-bold uppercase tracking-widest placeholder:text-zinc-600" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
           </div>
 
           <div className="flex items-center gap-4">
-            <div className={`px-3 py-1 bg-white/5 border border-emerald-500/30 rounded-full flex items-center gap-2`}>
+            <div className={`px-3 py-1 bg-white/5 border border-emerald-500/30 rounded-full hidden md:flex items-center gap-2`}>
               <div className={`w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse`}></div>
-              <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">
+              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
                 Cloud Live
               </span>
             </div>
-            <button onClick={handleLogout} className="w-9 h-9 rounded-full bg-zinc-800 border border-white/10 overflow-hidden cursor-pointer hover:border-red-500 transition-all group relative">
+            <button onClick={handleLogout} className="w-9 h-9 rounded-full bg-[#16283F] border border-white/10 overflow-hidden cursor-pointer hover:border-red-500 transition-all group relative">
               <img src={`https://ui-avatars.com/api/?name=${session?.user?.email || 'Local'}&background=c1ff00&color=000`} alt="avatar" />
               <div className="absolute inset-0 bg-red-500/80 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
                 <i className="fa-solid fa-power-off text-xs"></i>
@@ -478,79 +546,120 @@ const App: React.FC = () => {
         </div>
       </nav>
 
-      <main className="max-w-[1600px] mx-auto p-6 lg:p-12 space-y-12 pb-24">
+      <main className="max-w-[1600px] mx-auto p-6 lg:p-12 space-y-12 pb-32 lg:pb-24">
         <Routes>
           <Route path="/" element={
             <>
-            <div className="flex flex-col md:flex-row items-end justify-between gap-6">
-              <div>
-                <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">
-                  <div className="w-1.5 h-1.5 bg-neon-accent rounded-full"></div>
-                  Authenticated Protocol: {session.user.email}
+            <Reveal>
+              <div className="flex flex-col md:flex-row items-end justify-between gap-6">
+                <div>
+                  <span className="eyebrow mb-4">{session.user.email}</span>
+                  <h1 className="text-6xl font-black tracking-tighter leading-none">
+                    Vault <span className="grad-text">Dashboard</span>
+                  </h1>
                 </div>
-                <h1 className="text-6xl font-black tracking-tighter leading-none">Vault Dashboard</h1>
+                <div className="flex gap-4">
+                  <button onClick={() => setIsImportModalOpen(true)} className="bento-card border border-white/10 text-white px-6 py-4 rounded-[1.5rem] font-black text-xs uppercase tracking-widest hover:bg-white/5 transition-all">Bulk Sync</button>
+                  <button onClick={() => setIsModalOpen(true)} className="text-black px-8 py-4 rounded-[1.5rem] font-black text-xs uppercase tracking-widest transition-all shadow-2xl hover:brightness-110" style={{ background: 'var(--grad)' }}>Create entry</button>
+                </div>
               </div>
-              <div className="flex gap-4">
-                <button onClick={() => setIsImportModalOpen(true)} className="bg-[#151518] border border-white/10 text-white px-6 py-4 rounded-[1.5rem] font-black text-xs uppercase tracking-widest hover:bg-white/5 transition-all">Bulk Sync</button>
-                <button onClick={() => setIsModalOpen(true)} className="bg-white text-black px-8 py-4 rounded-[1.5rem] font-black text-xs uppercase tracking-widest hover:bg-neon-accent transition-all shadow-2xl">Create entry</button>
-              </div>
-            </div>
+            </Reveal>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-              <div className="lg:col-span-8 bento-card p-0 flex group overflow-hidden relative shadow-2xl min-h-[400px]">
-                <div className="w-1/2 p-12 flex flex-col justify-between z-10 border-r border-white/5">
-                  <div className="space-y-4">
-                    <p className="text-zinc-500 text-xs font-black uppercase tracking-[0.2em]">System Pulse</p>
-                    <p className="text-7xl font-black text-white leading-none mb-2">{formattedTime}</p>
-                    <p className="text-[11px] font-black text-neon-accent uppercase tracking-[0.3em] mb-8">{formattedDate}</p>
-                    <div className="flex items-center gap-4 py-3 px-6 bg-white/[0.03] border border-white/[0.05] rounded-2xl">
-                      <div className="flex flex-col"><span className="text-[9px] font-black text-zinc-500 uppercase">Records</span><span className="text-2xl font-black">{stats.total}</span></div>
-                      <div className="w-px h-8 bg-white/10"></div>
-                      <div className="flex flex-col"><span className="text-[9px] font-black text-zinc-500 uppercase">AI Enriched</span><span className="text-2xl font-black text-zinc-400">{stats.enriched}</span></div>
-                    </div>
+              <Reveal className="lg:col-span-8">
+              <div className="bento-card spot p-0 flex flex-col lg:flex-row group overflow-hidden relative shadow-2xl lg:min-h-[400px] h-full" onMouseMove={spotlight}>
+                <div className="w-full lg:w-[44%] p-8 lg:p-12 flex flex-col justify-between gap-8 z-10 border-b lg:border-b-0 lg:border-r border-white/5">
+                  <div className="space-y-3">
+                    <span className="eyebrow">System Pulse</span>
+                    <h2 className="text-4xl xl:text-5xl font-black tracking-tight leading-[1.05] font-display">
+                      {greeting}<span className="grad-text">.</span>
+                    </h2>
+                    <p className="text-[11px] font-black uppercase tracking-[0.25em] text-zinc-500 font-mono-data">
+                      {formattedDate} <span className="text-zinc-700">·</span> <span style={{ color: 'var(--lime)' }}>{formattedTime}</span>
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <NavLink to="/library" className="group/stat rounded-2xl bg-white/[0.03] border border-white/[0.05] px-3 py-2.5 hover:border-white/15 transition-colors">
+                      <CountUp value={stats.total} className="text-xl xl:text-2xl font-black grad-text font-display block" />
+                      <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider whitespace-nowrap group-hover/stat:text-zinc-300 transition-colors">Saved</span>
+                    </NavLink>
+                    <NavLink to={queueCollectionId ? `/collection/${queueCollectionId}` : '/library'} className="group/stat rounded-2xl bg-white/[0.03] border border-white/[0.05] px-3 py-2.5 hover:border-white/15 transition-colors">
+                      <CountUp value={stats.unread} className="text-xl xl:text-2xl font-black text-white font-display block" />
+                      <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider whitespace-nowrap group-hover/stat:text-zinc-300 transition-colors">Unread</span>
+                    </NavLink>
+                    <NavLink to="/library" className="group/stat rounded-2xl bg-white/[0.03] border border-white/[0.05] px-3 py-2.5 hover:border-white/15 transition-colors">
+                      <CountUp value={stats.thisWeek} className="text-xl xl:text-2xl font-black text-zinc-400 font-display block" />
+                      <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider whitespace-nowrap group-hover/stat:text-zinc-300 transition-colors">7 days</span>
+                    </NavLink>
                   </div>
                 </div>
-                <div className="w-1/2 relative bg-zinc-900/30 p-8 flex flex-col">
+                <div className="w-full lg:w-[56%] relative bg-[#0D1B2B]/50 p-6 lg:p-8 flex flex-col min-h-[300px]">
                   <div className="flex items-center justify-between mb-6">
-                    <p className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em]">AI Pipeline</p>
-                    {stats.processing > 0 && (
-                      <span className="px-3 py-1 bg-[#c1ff00]/10 border border-[#c1ff00]/30 rounded-full text-[9px] font-black text-[#c1ff00] uppercase tracking-widest flex items-center gap-2">
-                        <i className="fa-solid fa-spinner fa-spin text-[9px]"></i>
+                    <span className="eyebrow">{stats.processing > 0 ? 'AI Pipeline' : 'Fresh from feeds'}</span>
+                    {stats.processing > 0 ? (
+                      <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border" style={{ color: 'var(--lime)', borderColor: 'rgba(168,207,56,.3)', background: 'rgba(168,207,56,.08)' }}>
+                        <i className="fa-solid fa-spinner fa-spin text-[10px]"></i>
                         {stats.processing} processing
                       </span>
+                    ) : (
+                      <NavLink to="/feeds" className="text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-white transition-colors">
+                        Manage feeds <i className="fa-solid fa-arrow-right ml-1"></i>
+                      </NavLink>
                     )}
                   </div>
-                  <div className="flex-grow overflow-y-auto no-scrollbar space-y-3">
+                  <div className="flex-grow overflow-y-auto no-scrollbar space-y-3 max-h-[430px]">
                     {processingLinks.length > 0 ? (
+                      // Pipeline takes over the panel only while something is actually processing.
                       processingLinks.slice(0, 6).map(link => (
                         <div key={`pipe-${link.id}`} className="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/[0.05] rounded-xl">
-                          <i className="fa-solid fa-spinner fa-spin text-[#c1ff00] text-xs shrink-0"></i>
+                          <i className="fa-solid fa-spinner fa-spin text-xs shrink-0" style={{ color: 'var(--lime)' }}></i>
                           <div className="min-w-0 flex-grow">
                             <p className="text-[11px] font-bold text-zinc-300 truncate">{link.title}</p>
-                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-600">{link.status === 'pending' ? 'Queued' : link.status === 'parsing' ? 'Reading content' : 'AI analysis'}</p>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600">{link.status === 'pending' ? 'Queued' : link.status === 'parsing' ? 'Reading content' : 'AI analysis'}</p>
                           </div>
                         </div>
                       ))
+                    ) : feedLinks.length > 0 ? (
+                      feedLinks.map(link => (
+                        <NavLink key={`feed-${link.id}`} to={`/item/${link.id}`} className="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/[0.05] rounded-xl hover:bg-white/[0.05] hover:border-white/10 transition-all group/feed">
+                          <div className="w-8 h-8 rounded-lg bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                            <img
+                              src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
+                              alt=""
+                              className="w-4 h-4 object-contain"
+                              onError={(e) => (e.currentTarget.style.display = 'none')}
+                            />
+                          </div>
+                          <div className="min-w-0 flex-grow">
+                            <p className="text-xs font-bold text-zinc-300 line-clamp-2 leading-snug group-hover/feed:text-white transition-colors">{link.title}</p>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600 truncate mt-0.5">{timeAgo(link.createdAt)} ago{link.summary ? ' · enriched' : ''}</p>
+                          </div>
+                          <i className="fa-solid fa-chevron-right text-[10px] text-zinc-700 group-hover/feed:text-zinc-400 shrink-0"></i>
+                        </NavLink>
+                      ))
                     ) : (
-                      <div className="h-full flex flex-col items-center justify-center text-center space-y-3 opacity-30">
-                        <i className="fa-solid fa-circle-check text-2xl text-zinc-600"></i>
-                        <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Pipeline idle — all items processed</p>
+                      <div className="h-full flex flex-col items-center justify-center text-center space-y-3 opacity-40">
+                        <i className="fa-solid fa-rss text-2xl text-zinc-600"></i>
+                        <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">No feed items yet</p>
+                        <NavLink to="/feeds" className="text-[10px] font-black uppercase tracking-widest transition-colors" style={{ color: 'var(--lime)' }}>Subscribe to a feed →</NavLink>
                       </div>
                     )}
                   </div>
                 </div>
               </div>
+              </Reveal>
 
               {/* Priority Vault Card - Grid Style */}
-              <div className="lg:col-span-4 bento-card p-8 flex flex-col shadow-2xl min-h-[400px]">
+              <Reveal className="lg:col-span-4" delay={120}>
+              <div className="bento-card spot p-8 flex flex-col shadow-2xl min-h-[400px] h-full" onMouseMove={spotlight}>
                 <div className="flex items-center justify-between mb-8">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-[#1c1c1c] border border-white/10 flex items-center justify-center text-white">
+                    <div className="w-9 h-9 rounded-xl border border-white/10 flex items-center justify-center text-black" style={{ background: 'var(--grad)' }}>
                       <i className="fa-solid fa-thumbtack text-xs"></i>
                     </div>
-                    <p className="text-zinc-400 text-[10px] font-black uppercase tracking-[0.2em]">Priority Vault</p>
+                    <span className="eyebrow">Priority Vault</span>
                   </div>
-                  <span className="px-3 py-1 bg-white/5 rounded-full text-[9px] font-black text-zinc-600 uppercase tracking-widest">
+                  <span className="px-3 py-1 bg-white/5 rounded-full text-[10px] font-black text-zinc-600 uppercase tracking-widest">
                     {pinnedLinks.length} Items
                   </span>
                 </div>
@@ -569,15 +678,15 @@ const App: React.FC = () => {
                         onDrop={() => handlePinnedDrop(link.id)}
                         className="group relative flex flex-col items-center justify-center p-3 bg-white/[0.02] rounded-2xl border border-white/[0.05] hover:bg-white/[0.05] hover:border-white/10 transition-all cursor-pointer text-center min-h-[80px]"
                       >
-                        <div className="w-[34px] h-[34px] rounded-xl bg-zinc-900 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 shadow-lg mb-2">
+                        <div className="w-[34px] h-[34px] rounded-xl bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0 shadow-lg mb-2">
                           <img
                             src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
                             alt=""
                             className="w-5 h-5 object-contain"
-                            onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=18181b&color=fff`)}
+                            onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=0D1B2B&color=fff`)}
                           />
                         </div>
-                        <p className="text-[9px] font-black text-zinc-400 truncate w-full uppercase tracking-tighter leading-tight">
+                        <p className="text-[10px] font-black text-zinc-400 truncate w-full uppercase tracking-tighter leading-tight">
                           {link.title}
                         </p>
                       </a>
@@ -593,84 +702,172 @@ const App: React.FC = () => {
                 </div>
 
               </div>
+              </Reveal>
             </div>
 
-            <div className="space-y-10">
-              <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-8 relative group/nav">
-                <div className="relative flex items-center w-full xl:w-auto">
-                  {/* Left Arrow */}
-                  <button
-                    onClick={() => scrollCategories('left')}
-                    className="absolute -left-4 z-20 w-8 h-8 rounded-full bg-zinc-900/80 border border-white/10 text-white flex items-center justify-center hover:bg-neon-accent hover:text-black transition-all opacity-0 group-hover/nav:opacity-100 shadow-xl"
-                  >
-                    <i className="fa-solid fa-chevron-left text-[10px]"></i>
-                  </button>
-
-                  <div
-                    ref={categoryScrollRef}
-                    className="flex items-center bg-[#151518] border border-white/[0.04] rounded-full p-1.5 w-full xl:w-auto overflow-x-auto no-scrollbar shadow-2xl relative"
-                  >
-                    <button onClick={() => setActiveCategory(null)} className={`whitespace-nowrap px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-[0.2em] transition-all ${!activeCategory ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Primary Feed</button>
-                    {categories.map(cat => (
-                      <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={`whitespace-nowrap px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-[0.2em] transition-all ${activeCategory === cat.id ? `${cat.color} text-black shadow-lg` : 'text-zinc-500 hover:text-white'}`}>{cat.name}</button>
+            {/* From your phone — items saved via the Linkat mobile app */}
+            {phoneLinks.length > 0 && (
+              <Reveal>
+                <section className="space-y-6">
+                  <div className="flex items-center gap-4">
+                    <span className="eyebrow">From your phone</span>
+                    <div className="h-px flex-grow bg-white/5"></div>
+                    {mobileCollectionId && (
+                      <NavLink to={`/collection/${mobileCollectionId}`} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                        View all <i className="fa-solid fa-arrow-right ml-1"></i>
+                      </NavLink>
+                    )}
+                  </div>
+                  <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+                    {phoneLinks.map(link => (
+                      <a
+                        key={`phone-${link.id}`}
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bento-card spot shrink-0 w-64 p-5 hover:border-white/10 transition-all group/phone"
+                        onMouseMove={spotlight}
+                      >
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="w-9 h-9 rounded-xl bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                            <img
+                              src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
+                              alt=""
+                              className="w-5 h-5 object-contain"
+                              onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=0D1B2B&color=fff`)}
+                            />
+                          </div>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 font-mono-data">{timeAgo(link.createdAt)} ago</span>
+                        </div>
+                        <p className="text-xs font-bold text-zinc-300 leading-snug line-clamp-2 group-hover/phone:text-white transition-colors">{link.title}</p>
+                      </a>
                     ))}
                   </div>
+                </section>
+              </Reveal>
+            )}
 
-                  {/* Right Arrow */}
-                  <button
-                    onClick={() => scrollCategories('right')}
-                    className="absolute -right-4 z-20 w-8 h-8 rounded-full bg-zinc-900/80 border border-white/10 text-white flex items-center justify-center hover:bg-neon-accent hover:text-black transition-all opacity-0 group-hover/nav:opacity-100 shadow-xl"
-                  >
-                    <i className="fa-solid fa-chevron-right text-[10px]"></i>
-                  </button>
-                </div>
-
-                <div className="flex items-center bg-[#151518] border border-white/[0.04] rounded-full p-1 shadow-xl">
-                  {(['date', 'name', 'custom'] as SortOption[]).map((option) => (
-                    <button key={option} onClick={() => setSortBy(option)} className={`px-5 py-2.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all ${sortBy === option ? 'bg-white/10 text-white shadow-inner' : 'text-zinc-600 hover:text-zinc-400'}`}>{option}</button>
+            {isVaultLoading ? (
+              /* Skeletons — never claim "empty" while the vault is still loading */
+              <div className="space-y-10">
+                <div className="skeleton h-6 w-48"></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
+                  {Array.from({ length: 8 }, (_, i) => (
+                    <div key={`sk-${i}`} className="skeleton h-56 rounded-[1.25rem]"></div>
                   ))}
                 </div>
               </div>
-
-              <div className="space-y-16">
-                {linksBySection ? (
-                  Object.entries(linksBySection).map(([sectionName, sectionLinks]) => (
-                    <div key={sectionName} className="space-y-8">
-                      <div className="flex items-center gap-4">
-                        <h2 className="text-xl font-black uppercase tracking-[0.3em] text-zinc-100">{sectionName}</h2>
-                        <div className="h-px flex-grow bg-white/5"></div>
-                        <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-full">{sectionLinks.length} Items</span>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
-                        {sectionLinks.map((link) => (
-                          <div key={link.id}>
-                            <LinkCard link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))
-                ) : (
+            ) : searchQuery.trim() ? (
+              /* Search takes over the briefing */
+              <div className="space-y-8">
+                <div className="flex items-center gap-4">
+                  <h2 className="text-xl font-black uppercase tracking-[0.3em] text-zinc-100 font-display">Search results</h2>
+                  <div className="h-px flex-grow bg-white/5"></div>
+                  <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-full">{searchMatches.length} matches</span>
+                </div>
+                {searchMatches.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
-                    {filteredLinks.length > 0 ? (
-                      filteredLinks.map((link) => (
-                        <div key={link.id} draggable={sortBy === 'custom'} onDragStart={() => handleDragStart(link.id)} onDragOver={handleDragOver} onDrop={() => handleDrop(link.id)} className={sortBy === 'custom' ? 'cursor-grab active:cursor-grabbing' : ''}>
-                          <LinkCard link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
-                        </div>
-                      ))
-                    ) : (
-                      <div className="col-span-full py-24 text-center space-y-4">
-                        <i className="fa-solid fa-box-open text-4xl text-zinc-800"></i>
-                        <div className="space-y-1">
-                          <p className="text-zinc-500 font-black uppercase tracking-widest text-xs">The vault is empty</p>
-                          <p className="text-zinc-700 text-[10px] font-bold">Save a URL and the AI pipeline will parse, summarize and tag it.</p>
-                        </div>
-                      </div>
-                    )}
+                    {searchMatches.map(link => (
+                      <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-16 text-center space-y-3">
+                    <i className="fa-solid fa-magnifying-glass text-3xl text-zinc-800"></i>
+                    <p className="text-zinc-500 font-black uppercase tracking-widest text-xs">No matches in your vault</p>
+                    <p className="text-zinc-700 text-[10px] font-bold">Try the Library search — it also looks inside article text.</p>
                   </div>
                 )}
               </div>
-            </div>
+            ) : vaultLinks.length === 0 ? (
+              <div className="py-24 text-center space-y-4">
+                <i className="fa-solid fa-box-open text-4xl text-zinc-800"></i>
+                <div className="space-y-1">
+                  <p className="text-zinc-500 font-black uppercase tracking-widest text-xs">The vault is empty</p>
+                  <p className="text-zinc-700 text-[10px] font-bold">Save a URL and the AI pipeline will parse, summarize and tag it.</p>
+                </div>
+              </div>
+            ) : (
+              /* The daily briefing: capped sections, each with a path into the Library */
+              <div className="space-y-14">
+                {continueReading.length > 0 && (
+                  <Reveal>
+                    <section className="space-y-6">
+                      <div className="flex items-center gap-4">
+                        <span className="eyebrow">Continue reading</span>
+                        <div className="h-px flex-grow bg-white/5"></div>
+                        {queueCollectionId && (
+                          <NavLink to={`/collection/${queueCollectionId}`} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                            Reading queue <i className="fa-solid fa-arrow-right ml-1"></i>
+                          </NavLink>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                        {continueReading.map(link => (
+                          <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
+                        ))}
+                      </div>
+                    </section>
+                  </Reveal>
+                )}
+
+                {dailyPicks.length > 0 && (
+                  <Reveal>
+                    <section className="space-y-6">
+                      <div className="flex items-center gap-4">
+                        <span className="eyebrow">Today's picks — worth a re-read</span>
+                        <div className="h-px flex-grow bg-white/5"></div>
+                        {resurfaceCollectionId && (
+                          <NavLink to={`/collection/${resurfaceCollectionId}`} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                            View all <i className="fa-solid fa-arrow-right ml-1"></i>
+                          </NavLink>
+                        )}
+                      </div>
+                      <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+                        {dailyPicks.slice(0, 5).map(link => (
+                          <NavLink
+                            key={`pick-${link.id}`}
+                            to={`/item/${link.id}`}
+                            className="bento-card spot shrink-0 w-72 p-5 hover:border-white/10 transition-all group/pick"
+                            onMouseMove={spotlight}
+                          >
+                            <div className="flex items-center gap-3 mb-3">
+                              <div className="w-9 h-9 rounded-xl bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                                <img
+                                  src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
+                                  alt=""
+                                  className="w-5 h-5 object-contain"
+                                  onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=0D1B2B&color=fff`)}
+                                />
+                              </div>
+                              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 font-mono-data">{timeAgo(link.createdAt)} old</span>
+                            </div>
+                            <p className="text-xs font-bold text-zinc-300 leading-snug line-clamp-2 group-hover/pick:text-white transition-colors">{link.title}</p>
+                          </NavLink>
+                        ))}
+                      </div>
+                    </section>
+                  </Reveal>
+                )}
+
+                <Reveal>
+                  <section className="space-y-6">
+                    <div className="flex items-center gap-4">
+                      <span className="eyebrow">Recently saved</span>
+                      <div className="h-px flex-grow bg-white/5"></div>
+                      <NavLink to="/library" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                        View all {vaultLinks.length.toLocaleString()} <i className="fa-solid fa-arrow-right ml-1"></i>
+                      </NavLink>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
+                      {recentlySaved.map(link => (
+                        <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
+                      ))}
+                    </div>
+                  </section>
+                </Reveal>
+              </div>
+            )}
           </>
           } />
           <Route path="/inbox" element={<LibraryLayout folders={folders} smartCollections={smartCollections} onDeleteSmartCollection={handleDeleteSmartCollection}>{renderLibrary('inbox')}</LibraryLayout>} />
@@ -683,6 +880,29 @@ const App: React.FC = () => {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+
+      {/* Mobile bottom navigation — the pill nav above is desktop-only */}
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0A1320]/85 backdrop-blur-xl border-t border-white/[0.06]" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <div className="grid grid-cols-4">
+          {([
+            { to: '/', end: true, icon: 'fa-vault', label: 'Vault' },
+            { to: '/library', end: false, icon: 'fa-book-open', label: 'Library' },
+            { to: '/feeds', end: false, icon: 'fa-rss', label: 'Feeds' },
+            { to: '/settings', end: false, icon: 'fa-sliders', label: 'Settings' },
+          ] as const).map(item => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) => `flex flex-col items-center justify-center gap-1 py-3 min-h-[56px] transition-colors ${isActive ? '' : 'text-zinc-500 hover:text-zinc-300'}`}
+              style={({ isActive }) => isActive ? { color: 'var(--lime)' } : undefined}
+            >
+              <i className={`fa-solid ${item.icon} text-base`}></i>
+              <span className="text-[10px] font-black uppercase tracking-widest">{item.label}</span>
+            </NavLink>
+          ))}
+        </div>
+      </nav>
 
       <AddLinkModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} categories={categories} onAdd={addLink} />
       <ImportModal isOpen={isImportModalOpen} onClose={() => setIsImportModalOpen(false)} onImport={handleImport} existingCount={links.length} />

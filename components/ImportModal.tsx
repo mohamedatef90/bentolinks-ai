@@ -47,7 +47,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, ex
 
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/90 backdrop-blur-2xl animate-in fade-in duration-300">
-      <div className="bg-[#151518] border border-white/10 w-full max-w-lg rounded-[3rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+      <div className="bg-[#0D1B2B] border border-white/10 w-full max-w-lg rounded-[3rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
         <div className="p-10 border-b border-white/5 flex justify-between items-start">
           <div>
             <div className="flex items-center gap-2 mb-2">
@@ -65,7 +65,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, ex
           {!file ? (
             <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-white/10 rounded-[2rem] cursor-pointer hover:bg-white/[0.02] transition-all group">
               <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                <i className="fa-solid fa-cloud-arrow-up text-3xl text-zinc-600 group-hover:text-[#c1ff00] mb-4 transition-colors"></i>
+                <i className="fa-solid fa-cloud-arrow-up text-3xl text-zinc-600 group-hover:text-[#A8CF38] mb-4 transition-colors"></i>
                 <p className="text-xs font-black uppercase tracking-widest text-zinc-400">Select HTML Export</p>
                 <p className="text-[10px] text-zinc-600 mt-2">Bookmarks.html from your browser</p>
               </div>
@@ -73,13 +73,13 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, ex
             </label>
           ) : (
             <div className="space-y-6">
-              <div className="p-6 bg-zinc-900/50 rounded-[2rem] border border-white/5">
-                <p className="text-4xl font-black tracking-tighter text-[#c1ff00] mb-1">{parsedCount}</p>
+              <div className="p-6 bg-[#0A1320]/50 rounded-[2rem] border border-white/5">
+                <p className="text-4xl font-black tracking-tighter text-[#A8CF38] mb-1">{parsedCount}</p>
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Resources Detected</p>
               </div>
 
               <div className="bg-white/[0.02] p-4 rounded-xl text-left">
-                <p className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.1em] leading-relaxed">
+                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.1em] leading-relaxed">
                   ✨ Links are imported instantly, then parsed and AI-analyzed in the background
                   (summary, tags, topic). Cards update live as each one completes.
                 </p>
@@ -105,7 +105,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, ex
               ) : (
                 <button
                   onClick={() => handleAction('add')}
-                  className="w-full py-5 bg-[#c1ff00] text-black font-black rounded-2xl hover:scale-[1.02] active:scale-[0.98] transition-all text-[11px] uppercase tracking-widest shadow-xl shadow-[#c1ff00]/10"
+                  className="w-full py-5 bg-[#A8CF38] text-black font-black rounded-2xl hover:scale-[1.02] active:scale-[0.98] transition-all text-[11px] uppercase tracking-widest shadow-xl shadow-[#A8CF38]/10"
                 >
                   Start Import Process
                 </button>

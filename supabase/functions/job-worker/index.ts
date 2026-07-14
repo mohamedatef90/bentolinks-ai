@@ -10,8 +10,10 @@ import { parseYouTube } from '../_shared/parsers/youtube.ts';
 import { parseTweet } from '../_shared/parsers/tweet.ts';
 import { parsePdf } from '../_shared/parsers/pdf.ts';
 import { parseReel } from '../_shared/parsers/reel.ts';
+import { parseReddit } from '../_shared/parsers/reddit.ts';
 import { ParsedContent } from '../_shared/parsers/types.ts';
-import { enrichContent, embedText } from '../_shared/gemini.ts';
+import { embedText } from '../_shared/gemini.ts';
+import { enrich, LlmProvider, ProviderConfig } from '../_shared/llm.ts';
 
 const BATCH_SIZE = 5;
 const TIME_BUDGET_MS = 120_000;
@@ -27,12 +29,18 @@ async function parseBySourceType(
       return await parseYouTube(item.url, geminiKey);
     case 'tweet':
       return await parseTweet(item.url);
+    case 'reddit':
+      return await parseReddit(item.url, {
+        clientId: await getSecret(db, 'REDDIT_CLIENT_ID'),
+        clientSecret: await getSecret(db, 'REDDIT_CLIENT_SECRET'),
+      });
     case 'pdf':
       return await parsePdf(item.url, geminiKey);
     case 'reel':
       return await parseReel(item.url, {
         apifyToken: await getSecret(db, 'APIFY_TOKEN'),
         scraperApiKey: await getSecret(db, 'SCRAPER_API_KEY'),
+        geminiKey,
       });
     default:
       return await parseArticle(item.url);
@@ -81,7 +89,7 @@ async function handleParse(db: SupabaseClient, job: Job, geminiKey: string | nul
   }
 }
 
-async function handleEnrich(db: SupabaseClient, job: Job, geminiKey: string) {
+async function handleEnrich(db: SupabaseClient, job: Job, llm: ProviderConfig) {
   const { data: item, error } = await db
     .from('content_items')
     .select('id, user_id, url, title, source_type, content_text, tags')
@@ -93,7 +101,7 @@ async function handleEnrich(db: SupabaseClient, job: Job, geminiKey: string) {
     return;
   }
 
-  const result = await enrichContent(geminiKey, {
+  const result = await enrich(llm, {
     title: item.title,
     url: item.url,
     sourceType: item.source_type,
@@ -154,6 +162,13 @@ async function processJobs(): Promise<{ processed: number; failed: number }> {
   await db.rpc('reclaim_stuck_jobs');
 
   const geminiKey = await getSecret(db, 'GEMINI_API_KEY');
+  // Enrichment provider is pluggable (Vault LLM_PROVIDER); embeddings/TTS stay Gemini.
+  const llm: ProviderConfig = {
+    provider: ((await getSecret(db, 'LLM_PROVIDER')) as LlmProvider) || 'gemini',
+    geminiKey,
+    anthropicKey: await getSecret(db, 'ANTHROPIC_API_KEY'),
+    openaiKey: await getSecret(db, 'OPENAI_API_KEY'),
+  };
 
   while (Date.now() - started < TIME_BUDGET_MS) {
     const { data: jobs, error } = await db.rpc('claim_jobs', { n: BATCH_SIZE });
@@ -170,8 +185,7 @@ async function processJobs(): Promise<{ processed: number; failed: number }> {
             await handleParse(db, job, geminiKey);
             break;
           case 'enrich':
-            if (!geminiKey) throw new Error('GEMINI_API_KEY missing from Vault');
-            await handleEnrich(db, job, geminiKey);
+            await handleEnrich(db, job, llm);
             break;
           case 'embed':
             if (!geminiKey) throw new Error('GEMINI_API_KEY missing from Vault');

@@ -175,7 +175,7 @@ const FeedsView: React.FC = () => {
 
         {candidates.length > 0 && (
           <div className="space-y-2">
-            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-600">Feeds found on this site — pick one:</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600">Feeds found on this site — pick one:</p>
             {candidates.map(c => (
               <button
                 key={c.feed_url}
@@ -197,7 +197,7 @@ const FeedsView: React.FC = () => {
       {/* Subscriptions */}
       {subs.length === 0 ? (
         <div className="py-20 flex flex-col items-center text-center space-y-6">
-          <div className="w-16 h-16 rounded-3xl bg-[#151518] border border-white/[0.06] flex items-center justify-center">
+          <div className="w-16 h-16 rounded-3xl bg-[#0D1B2B] border border-white/[0.06] flex items-center justify-center">
             <i className="fa-solid fa-rss text-2xl text-neon-accent"></i>
           </div>
           <div className="space-y-2">
@@ -214,7 +214,7 @@ const FeedsView: React.FC = () => {
             const deactivated = !sub.is_active && sub.error_count >= 10;
             return (
               <div key={sub.id} className={`bento-card p-5 flex items-center gap-5 ${!sub.is_active ? 'opacity-60' : ''}`}>
-                <div className="w-11 h-11 rounded-xl bg-zinc-900 border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                <div className="w-11 h-11 rounded-xl bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
                   {sub.favicon_url
                     ? <img src={sub.favicon_url} alt="" className="w-6 h-6 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                     : <i className="fa-solid fa-rss text-zinc-600 text-sm"></i>}
@@ -224,7 +224,7 @@ const FeedsView: React.FC = () => {
                   <div className="flex items-center gap-3">
                     <p className="text-sm font-black text-zinc-200 truncate">{sub.title || domain}</p>
                     {!sub.is_active && (
-                      <span className="px-2.5 py-0.5 bg-zinc-800 border border-white/10 rounded-full text-[8px] font-black uppercase tracking-widest text-zinc-500 shrink-0">
+                      <span className="px-2.5 py-0.5 bg-[#16283F] border border-white/10 rounded-full text-[8px] font-black uppercase tracking-widest text-zinc-500 shrink-0">
                         {deactivated ? 'Auto-disabled' : 'Paused'}
                       </span>
                     )}
@@ -264,7 +264,7 @@ const FeedsView: React.FC = () => {
                       onClick={() => handleUnsubscribe(sub.id)}
                       onBlur={() => setConfirmDeleteId(null)}
                       autoFocus
-                      className="h-9 px-4 rounded-full bg-red-500/90 text-white text-[9px] font-black uppercase tracking-widest transition-all"
+                      className="h-9 px-4 rounded-full bg-red-500/90 text-white text-[10px] font-black uppercase tracking-widest transition-all"
                     >
                       Confirm
                     </button>

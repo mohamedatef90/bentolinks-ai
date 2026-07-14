@@ -3,6 +3,9 @@ export type ItemStatus = 'pending' | 'parsing' | 'enriching' | 'ready' | 'degrad
 export type SourceType =
   | 'article' | 'youtube' | 'reel' | 'tweet' | 'pdf' | 'rss' | 'reddit' | 'podcast' | 'other';
 
+/** Which client saved the item (web app, Linkat mobile, extension, bulk import, RSS poller). */
+export type SavedVia = 'web' | 'mobile' | 'extension' | 'import' | 'rss';
+
 /** Row shape of the content_items table (fields the UI needs). */
 export interface ContentItem {
   id: string;
@@ -17,6 +20,7 @@ export interface ContentItem {
   topic: string | null;
   source_type: SourceType;
   status: ItemStatus;
+  saved_via: SavedVia;
   site_name: string | null;
   thumbnail_url: string | null;
   favicon_url: string | null;
@@ -51,6 +55,7 @@ export interface SmartCollection {
 /** Filter descriptor — same jsonb shape stored in smart_collections.query. */
 export interface FilterState {
   source_type?: SourceType[];
+  saved_via?: SavedVia[];
   read_status?: ('unread' | 'reading' | 'read')[];
   tags?: string[];
   topic?: string;
@@ -94,10 +99,14 @@ export interface Link {
   user_id?: string;
   favicon?: string;
   isPinned?: boolean;
+  isStarred?: boolean;
+  readStatus?: 'unread' | 'reading' | 'read';
   status?: ItemStatus;
   summary?: string | null;
   tags?: string[];
   thumbnailUrl?: string | null;
+  sourceType?: SourceType;
+  savedVia?: SavedVia;
 }
 
 export interface Category {

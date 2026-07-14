@@ -189,6 +189,11 @@ export async function parseYouTube(url: string, geminiKey: string | null): Promi
     content_text: transcript,
     word_count: wordCount(transcript),
     duration_seconds: inner.durationSeconds,
-    raw_metadata: { video_id: id, transcript_source: transcriptSource },
+    raw_metadata: {
+      video_id: id,
+      transcript_source: transcriptSource,
+      video_url: watchUrl,
+      embed_url: `https://www.youtube.com/embed/${id}`,
+    },
   };
 }

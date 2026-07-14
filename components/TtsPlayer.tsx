@@ -126,12 +126,12 @@ const TtsPlayer: React.FC<TtsPlayerProps> = ({ itemId, hasSummary, hasFullText }
           <i className="fa-solid fa-headphones text-neon-accent"></i> Listen
         </p>
         {hasSummary && hasFullText && (
-          <div className="flex items-center bg-[#151518] border border-white/[0.04] rounded-full p-1">
+          <div className="flex items-center bg-[#0D1B2B] border border-white/[0.04] rounded-full p-1">
             {(['summary', 'full'] as TtsMode[]).map(m => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
-                className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all ${mode === m ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}
+                className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${mode === m ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}
               >
                 {m === 'summary' ? 'Summary' : 'Full text'}
               </button>
@@ -182,9 +182,9 @@ const TtsPlayer: React.FC<TtsPlayerProps> = ({ itemId, hasSummary, hasFullText }
               step={0.1}
               value={Math.min(position, duration || 0)}
               onChange={handleSeek}
-              className="w-full h-1.5 accent-[#c1ff00] cursor-pointer"
+              className="w-full h-1.5 accent-[#A8CF38] cursor-pointer"
             />
-            <div className="flex justify-between text-[9px] font-black text-zinc-600 uppercase tracking-widest">
+            <div className="flex justify-between text-[10px] font-black text-zinc-600 uppercase tracking-widest">
               <span>{fmt(position)}</span>
               <span>{fmt(duration)}</span>
             </div>

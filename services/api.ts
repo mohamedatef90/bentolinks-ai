@@ -5,11 +5,11 @@ import { supabase } from './supabase';
 import { ContentItem, Link, Category, Folder, SmartCollection, FilterState, RssSubscription, FeedCandidate } from '../types';
 
 const ITEM_COLUMNS =
-  'id, url, title, description, summary, key_points, tags, topic, source_type, status, ' +
+  'id, url, title, description, summary, key_points, tags, topic, source_type, status, saved_via, ' +
   'site_name, thumbnail_url, favicon_url, is_pinned, is_starred, read_status, section, ' +
-  'created_at, item_folders(folder_id)';
+  'published_at, created_at, item_folders(folder_id)';
 
-const ITEM_COLUMNS_FULL = ITEM_COLUMNS + ', content_text, published_at';
+const ITEM_COLUMNS_FULL = ITEM_COLUMNS + ', content_text';
 
 export interface SaveItemResult {
   id: string;
@@ -32,11 +32,15 @@ export function toLink(item: ContentItem): Link {
     section: item.section || undefined,
     createdAt: Date.parse(item.created_at),
     isPinned: item.is_pinned,
+    isStarred: item.is_starred,
+    readStatus: item.read_status,
     status: item.status,
     summary: item.summary,
     tags: item.tags,
     thumbnailUrl: item.thumbnail_url,
     favicon: item.favicon_url || undefined,
+    sourceType: item.source_type,
+    savedVia: item.saved_via,
   };
 }
 
@@ -85,6 +89,7 @@ export const api = {
         : ITEM_COLUMNS;
       let query = supabase.from('content_items').select(columns);
       if (filter.source_type?.length) query = query.in('source_type', filter.source_type);
+      if (filter.saved_via?.length) query = query.in('saved_via', filter.saved_via);
       if (filter.read_status?.length) query = query.in('read_status', filter.read_status);
       if (filter.topic) query = query.eq('topic', filter.topic);
       if (filter.is_starred) query = query.eq('is_starred', true);

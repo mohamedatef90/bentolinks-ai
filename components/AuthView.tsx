@@ -65,10 +65,10 @@ const AuthView: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden bg-[#050505] text-white selection:bg-neon-accent selection:text-black">
+    <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden text-white selection:bg-neon-accent selection:text-black">
       {/* Refined Background Elements - No Blur */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#c1ff00]/5 rounded-full"></div>
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#A8CF38]/5 rounded-full"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-600/5 rounded-full"></div>
         {/* High-fidelity grid */}
         <div className="absolute inset-0 opacity-[0.05]" style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '60px 60px' }}></div>
@@ -77,7 +77,7 @@ const AuthView: React.FC = () => {
       </div>
 
       <div className="w-full max-w-lg perspective-1000 z-10">
-        <div className="bento-card p-10 md:p-14 relative shadow-[0_40px_120px_rgba(0,0,0,0.9)] border-white/10 bg-[#0c0c0e] transition-all duration-500">
+        <div className="bento-card p-10 md:p-14 relative shadow-[0_40px_120px_rgba(0,0,0,0.9)] border-white/10 bg-[#0A1320] transition-all duration-500">
           
           {/* Header Section */}
           <div className="flex flex-col items-center mb-10 text-center">
@@ -114,7 +114,7 @@ const AuthView: React.FC = () => {
 
           <form onSubmit={handleAuth} className="space-y-6">
             <div className="space-y-2">
-              <label className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 px-1">Operator Email</label>
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 px-1">Operator Email</label>
               <div className="relative">
                 <i className="fa-solid fa-envelope absolute left-5 top-1/2 -translate-y-1/2 text-zinc-600"></i>
                 <input 
@@ -130,7 +130,7 @@ const AuthView: React.FC = () => {
 
             <div className="space-y-2">
               <div className="flex justify-between px-1">
-                <label className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Access Key</label>
+                <label className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">Access Key</label>
                 {isLogin && <button type="button" className="text-[8px] font-black text-zinc-600 hover:text-white transition-colors uppercase tracking-widest">Forgot?</button>}
               </div>
               <div className="relative group">
@@ -166,7 +166,7 @@ const AuthView: React.FC = () => {
                     {rememberMe && <i className="fa-solid fa-check text-[10px] text-black"></i>}
                   </div>
                 </div>
-                <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500 group-hover:text-zinc-300">Remember Identity</span>
+                <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500 group-hover:text-zinc-300">Remember Identity</span>
               </label>
             </div>
 
@@ -189,7 +189,7 @@ const AuthView: React.FC = () => {
           <div className="mt-10 pt-8 border-t border-white/5 text-center">
             <button 
               onClick={() => { setIsLogin(!isLogin); setError(null); }}
-              className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500 hover:text-neon-accent transition-colors flex items-center justify-center gap-2 mx-auto"
+              className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 hover:text-neon-accent transition-colors flex items-center justify-center gap-2 mx-auto"
             >
               {isLogin ? (
                 <>Need to create an account? <span className="text-white hover:underline">Sign up</span></>
@@ -201,7 +201,7 @@ const AuthView: React.FC = () => {
         </div>
         
         {/* Footer Credit */}
-        <p className="mt-8 text-center text-[9px] font-black text-zinc-700 uppercase tracking-[0.4em]">
+        <p className="mt-8 text-center text-[10px] font-black text-zinc-700 uppercase tracking-[0.4em]">
           BentoLinks Neural Hub &copy; 2025
         </p>
       </div>

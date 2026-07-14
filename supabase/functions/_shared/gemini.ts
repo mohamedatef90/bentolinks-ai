@@ -257,6 +257,31 @@ async function uploadFile(apiKey: string, bytes: Uint8Array, mimeType: string): 
   return file.uri as string;
 }
 
+/**
+ * Transcribe a short video's spoken content by uploading the file to Gemini.
+ * Used for reels/TikToks (whose speech isn't in a caption). Caller must cap the
+ * download size and only pass short clips — EXPENSIVE and time-bounded.
+ */
+export async function transcribeVideoBytes(
+  apiKey: string,
+  bytes: Uint8Array,
+  mimeType: string,
+): Promise<string> {
+  const fileUri = await uploadFile(apiKey, bytes, mimeType);
+  const prompt =
+    'This is a short social video. Transcribe everything spoken in it, in the original ' +
+    'language, and briefly note key on-screen text. Output plain text only — no timestamps, ' +
+    'no commentary.';
+  return await callGemini(
+    apiKey,
+    {
+      contents: [{ parts: [{ fileData: { fileUri, mimeType } }, { text: prompt }] }],
+      generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
+    },
+    90_000,
+  );
+}
+
 /** Multimodal text extraction from a PDF the text layer couldn't handle (scans etc.). */
 export async function extractPdfViaGemini(apiKey: string, bytes: Uint8Array): Promise<string> {
   const fileUri = await uploadFile(apiKey, bytes, 'application/pdf');

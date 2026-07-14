@@ -3,11 +3,14 @@ import { serviceClient, getUser } from '../_shared/db.ts';
 import { canonicalizeUrl, detectSourceType, validatePublicUrl } from '../_shared/canonical.ts';
 import { enqueue } from '../_shared/queue.ts';
 
+const SAVED_VIA = ['web', 'mobile', 'extension', 'import'] as const;
+
 interface SaveRequest {
   url?: string;
   urls?: string[]; // batch mode (bookmark import), max 100
   folder_id?: string;
   tags?: string[];
+  saved_via?: (typeof SAVED_VIA)[number]; // client origin; defaults to 'web'
 }
 
 Deno.serve(async (req: Request) => {
@@ -30,6 +33,9 @@ Deno.serve(async (req: Request) => {
 
   const db = serviceClient();
   const isBatch = !!body.urls;
+  const savedVia = SAVED_VIA.includes(body.saved_via as (typeof SAVED_VIA)[number])
+    ? body.saved_via!
+    : isBatch ? 'import' : 'web';
   const results: Array<Record<string, unknown>> = [];
 
   for (const raw of urls) {
@@ -63,6 +69,7 @@ Deno.serve(async (req: Request) => {
         canonical_url: canonical,
         source_type: sourceType,
         status: 'pending',
+        saved_via: savedVia,
         tags: (body.tags ?? []).slice(0, 10),
       })
       .select('id, url, title, status, source_type, created_at')

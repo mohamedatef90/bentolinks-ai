@@ -31,7 +31,7 @@ const ProgressModal: React.FC<ProgressModalProps> = ({ current, total, isComplet
               cy="50"
             />
             <circle
-              className="text-[#c1ff00] transition-all duration-500 ease-out"
+              className="text-[#A8CF38] transition-all duration-500 ease-out"
               strokeWidth="4"
               strokeDasharray={282.7}
               strokeDashoffset={282.7 - (282.7 * percentage) / 100}
@@ -58,12 +58,12 @@ const ProgressModal: React.FC<ProgressModalProps> = ({ current, total, isComplet
         <div className="p-6 bg-white/[0.03] border border-white/5 rounded-3xl flex items-center justify-center gap-4">
           <div className="text-left">
             <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest mb-1">Estimated Remaining</p>
-            <p className="text-xl font-black text-[#c1ff00] tabular-nums">
+            <p className="text-xl font-black text-[#A8CF38] tabular-nums">
               {minutes > 0 ? `${minutes}m ` : ''}{seconds}s
             </p>
           </div>
           <div className="w-px h-8 bg-white/10"></div>
-          <i className="fa-solid fa-wand-magic-sparkles text-xl text-[#c1ff00] animate-pulse"></i>
+          <i className="fa-solid fa-wand-magic-sparkles text-xl text-[#A8CF38] animate-pulse"></i>
         </div>
 
         <p className="text-zinc-600 text-[10px] font-medium italic">

@@ -21,7 +21,7 @@ BentoLinks is evolving into **RefVault**, an AI knowledge vault (see `~/.claude/
 - **Frontend:** React 19, TypeScript 5.7, Vite 6 SPA (stays a SPA — no Next.js)
 - **Styling:** Tailwind CSS (CDN), Font Awesome icons
 - **Backend:** Supabase — Postgres 17 (project `sjskpjgepbvblojohtlr`, "BentoLinks-Vault"), Auth, Edge Functions, pg_cron + pg_net job queue, pgvector (Phase 4)
-- **AI:** Google Gemini `gemini-2.5-flash` server-side only (key in Supabase Vault, read via `public.get_secret` RPC)
+- **AI:** Pluggable enrichment provider (`_shared/llm.ts`, Vault `LLM_PROVIDER` = `gemini` | `claude` | `openai`, default `gemini`): Gemini `gemini-2.5-flash`, Claude `claude-haiku-4-5` (tool-use JSON), or OpenAI `gpt-4o-mini` (json_schema) — each needs its key in Vault (`GEMINI_API_KEY`/`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`). Embeddings (`gemini-embedding-001`) and TTS stay Gemini-only regardless of provider. All server-side, keys read via `public.get_secret` RPC.
 - **Deployment:** Vercel (static) + Supabase Edge Functions
 - **Mobile (Phase 3):** the Linkat Flutter app (github.com/mohamedatef90/linkat) becomes the mobile client
 
@@ -55,7 +55,7 @@ Pure-SQL mechanism: nightly pg_cron `refvault-daily-picks` (02:23) runs `public.
   - `_shared/` - db/gemini/canonical/queue/cors/feed modules + `parsers/{article,youtube,tweet,pdf,reel,types}.ts`
 
 ### Database Schema (RefVault)
-- `content_items` — superset of old `links`: canonical_url (unique per user = dedupe), source_type, status, content_text, summary, key_points, tags[], topic, read_status, is_starred/pinned, embedding vector(768), generated `search_tsv`
+- `content_items` — superset of old `links`: canonical_url (unique per user = dedupe), source_type, status, `saved_via` (web/mobile/extension/import/rss — client origin, set by save-item/rss-poller; powers the "From your phone" home section + system collection, migration 0009), content_text, summary, key_points, tags[], topic, read_status, is_starred/pinned, embedding vector(768), generated `search_tsv`
 - `folders` (tree, max depth 3), `item_folders` (many-to-many), `smart_collections` (query jsonb; system rows seeded per user), `rss_subscriptions` (etag/last_modified conditional GET state, error_count backoff), `daily_picks` (nightly Resurface set), `jobs` (queue; service-role only, no RLS policies by design)
 - Legacy `links`/`categories` tables still exist read-only; drop at Phase 2 cutover. Backup in `backups/`.
 
@@ -65,7 +65,13 @@ Pure-SQL mechanism: nightly pg_cron `refvault-daily-picks` (02:23) runs `public.
 - Gemini structured output (`responseMimeType: application/json` + responseSchema) with 429/5xx backoff retry
 - Edge Function deploys were done via Supabase MCP `deploy_edge_function` with the full file bundle including `_shared/*` (files under `supabase/functions/` are the source of truth — redeploy after editing)
 - Cron-invoked functions (`job-worker`, `rss-poller`, `tts-generate` cleanup) are gated by the `x-worker-secret` header checked against Vault; the cron SQL reads ANON_KEY/WORKER_SECRET from Vault at fire time (pattern in `0004_cron_worker_tick.sql`)
-- Source-type parsers: youtube (oEmbed + caption endpoints, Gemini URL-ingestion fallback), tweet (fxtwitter), pdf (unpdf + Gemini Files fallback), reel (opt-in paid scrapers via APIFY_TOKEN/SCRAPER_API_KEY in Vault, else `status='degraded'`)
+- Source-type parsers: youtube (oEmbed + caption endpoints, Gemini URL-ingestion fallback; stores `video_url`/`embed_url` in raw_metadata), tweet (fxtwitter), reddit (app-only OAuth via `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` in Vault → oauth.reddit.com; falls back to public `.json` which 403s from cloud IPs), pdf (unpdf + Gemini Files fallback), reel (opt-in paid scrapers via APIFY_TOKEN/SCRAPER_API_KEY in Vault; captures `video_url` + transcribes spoken audio via Gemini Files (`transcribeVideoBytes`, 20MB cap) merged with the caption; else `status='degraded'`)
 
-### Theming
+### Theming & Home UX
 Three themes via CSS variables: `default` (dark), `professional` (light), `funny` (playful). Theme preference persisted in localStorage.
+
+The `default` theme uses the **magic_black** design language: navy canvas (`--ink #0A1320`), glass panels (`--panel` + backdrop-blur), green→lime gradient accent (`--grad`, `--lime #A8CF38` drives the legacy `neon-accent` classes). Motion helpers in `components/magic.tsx` (Reveal, CountUp, card spotlight, CursorGlow) — all `prefers-reduced-motion`-guarded; tokens/CSS live in `index.html`.
+
+Home ("Vault Hub") is a **daily briefing**, not an archive: capped sections — Continue reading (read_status='reading', ≤6), Today's Picks (daily_picks, ≤5), From your phone (saved_via='mobile'), Recently saved (≤12, "View all" → /library) — each linking into the Library; the hero's right panel shows latest feed items (pipeline items take it over while processing); the nav search switches home to a results grid. Bookmarks only (`source_type != 'rss'`). Skeleton shimmer while loading. Card titles open the reader (/item/:id); "Visit site" opens the source.
+
+Responsive/a11y: mobile (<lg) gets a fixed bottom nav (Vault/Library/Feeds/Settings) and the Library sidebar collapses to a chip scroller; hover-revealed card actions become visible on touch devices via the `.hover-reveal` class (`@media (hover:none)` in index.html); Library filter state lives in URL query params (`views/LibraryView.tsx` filterFromParams/paramsFromFilter). Library has three view modes persisted in localStorage (`library-view`): grid, list, and **reader** — a Readwise-style split pane (`components/ReaderSplit.tsx`, j/k navigation, metadata rail, AI summary block). System collections show explanatory empty states.

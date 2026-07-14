@@ -9,26 +9,169 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="alternate icon" type="image/png" href="/favicon.png">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-    <meta name="theme-color" content="#c1ff00">
+    <meta name="theme-color" content="#A8CF38">
     <link rel="manifest" href="/manifest.json">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-main: #0c0c0e;
-            --bg-card: #151518;
-            --accent: #c1ff00;
-            --text-main: #fafafa;
-            --text-dim: #71717a;
-            --border: rgba(255, 255, 255, 0.04);
-            --radius: 2rem;
-            --font-family: 'Plus Jakarta Sans', sans-serif;
+            /* magic_black tokens: near-black navy canvas + green→lime accent */
+            --ink: #0A1320;
+            --ink2: #0D1B2B;
+            --panel: rgba(18, 32, 54, 0.55);
+            --green: #7CB342;
+            --lime: #A8CF38;
+            --lime-pale: #CDE9A2;
+            --fog: #C5D2E2;
+            --fog2: #8497AE;
+            --grad: linear-gradient(135deg, var(--green), var(--lime));
+            --ease: cubic-bezier(.2, .7, .2, 1);
+
+            --bg-main: var(--ink);
+            --bg-card: var(--panel);
+            --accent: var(--lime);
+            --text-main: #ffffff;
+            --text-dim: var(--fog2);
+            --border: rgba(197, 210, 226, 0.08);
+            --radius: 1.25rem;
+            --font-family: 'Inter', 'Plus Jakarta Sans', sans-serif;
+            --font-display: 'Space Grotesk', 'Plus Jakarta Sans', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
         }
 
         body.theme-default {
-            background: radial-gradient(circle at 50% 0%, #1a1a1e 0%, #0c0c0e 100%);
+            background:
+                radial-gradient(1000px 500px at 85% -10%, rgba(124, 179, 66, 0.10), transparent 60%),
+                radial-gradient(800px 500px at -10% 30%, rgba(168, 207, 56, 0.05), transparent 55%),
+                radial-gradient(circle at 50% 0%, var(--ink2) 0%, var(--ink) 100%);
             background-attachment: fixed;
+        }
+
+        h1, h2, h3, .font-display {
+            font-family: var(--font-display);
+        }
+
+        .font-mono-data {
+            font-family: var(--font-mono);
+        }
+
+        /* Gradient text for hero headings / stat numbers */
+        .grad-text {
+            background: linear-gradient(135deg, var(--lime-pale), var(--lime) 45%, var(--green));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        /* Mono eyebrow pill */
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: var(--fog2);
+            border: 1px solid var(--border);
+            background: rgba(18, 32, 54, 0.4);
+            padding: 0.4rem 0.9rem;
+            border-radius: 999px;
+        }
+        .eyebrow::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: var(--grad);
+            box-shadow: 0 0 10px rgba(168, 207, 56, 0.8);
+        }
+
+        /* Scroll reveal */
+        .reveal {
+            opacity: 0;
+            transform: translateY(18px);
+            transition: opacity .7s var(--ease), transform .7s var(--ease);
+        }
+        .reveal.revealed {
+            opacity: 1;
+            transform: none;
+        }
+
+        /* Glass card + cursor spotlight (JS sets --mx/--my) */
+        .theme-default .bento-card {
+            position: relative;
+            background: var(--panel);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            overflow: hidden;
+        }
+        .theme-default .bento-card.spot::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity .4s var(--ease);
+            background: radial-gradient(340px circle at var(--mx, 50%) var(--my, 50%),
+                rgba(168, 207, 56, 0.08), transparent 65%);
+        }
+        .theme-default .bento-card.spot:hover::after {
+            opacity: 1;
+        }
+
+        /* Ambient cursor glow (element mounted by React, RM-guarded there) */
+        #cursor-glow {
+            position: fixed;
+            width: 480px;
+            height: 480px;
+            border-radius: 999px;
+            pointer-events: none;
+            z-index: 0;
+            background: radial-gradient(circle, rgba(124, 179, 66, 0.07), transparent 65%);
+            transform: translate(-50%, -50%);
+            transition: opacity .5s var(--ease);
+        }
+
+        /* Touch devices: hover-revealed actions must be visible without hover */
+        @media (hover: none) {
+            .hover-reveal {
+                opacity: 0.85 !important;
+            }
+        }
+
+        /* Skeleton shimmer while data loads */
+        .skeleton {
+            position: relative;
+            overflow: hidden;
+            background: rgba(197, 210, 226, 0.06);
+            border-radius: 0.75rem;
+        }
+        .skeleton::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            transform: translateX(-100%);
+            background: linear-gradient(90deg, transparent, rgba(197, 210, 226, 0.07), transparent);
+            animation: shimmer 1.6s var(--ease) infinite;
+        }
+        @keyframes shimmer {
+            100% { transform: translateX(100%); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .skeleton::after { animation: none; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .reveal { opacity: 1; transform: none; transition: none; }
+            #cursor-glow { display: none; }
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
 
         body.theme-professional {

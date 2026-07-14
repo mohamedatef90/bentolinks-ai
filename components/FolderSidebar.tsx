@@ -41,7 +41,7 @@ const FolderRow: React.FC<{ node: FolderNode; depth: number }> = ({ node, depth 
             onClick={() => setExpanded(e => !e)}
             className="w-5 h-5 flex items-center justify-center text-zinc-600 hover:text-white shrink-0"
           >
-            <i className={`fa-solid fa-chevron-right text-[9px] transition-transform ${expanded ? 'rotate-90' : ''}`}></i>
+            <i className={`fa-solid fa-chevron-right text-[10px] transition-transform ${expanded ? 'rotate-90' : ''}`}></i>
           </button>
         ) : (
           <span className="w-5 shrink-0" />
@@ -75,7 +75,7 @@ const FolderSidebar: React.FC<FolderSidebarProps> = ({ folders, smartCollections
     return (
       <button
         onClick={() => setCollapsed(false)}
-        className="w-10 h-10 shrink-0 rounded-xl bg-[#151518] border border-white/[0.04] text-zinc-500 hover:text-white flex items-center justify-center self-start"
+        className="w-10 h-10 shrink-0 rounded-xl bg-[#0D1B2B] border border-white/[0.04] text-zinc-500 hover:text-white flex items-center justify-center self-start"
         title="Expand sidebar"
       >
         <i className="fa-solid fa-bars text-xs"></i>
@@ -120,7 +120,7 @@ const FolderSidebar: React.FC<FolderSidebarProps> = ({ folders, smartCollections
       </div>
 
       <div className="space-y-3">
-        <p className="px-4 text-[9px] font-black uppercase tracking-[0.2em] text-zinc-700">Folders</p>
+        <p className="px-4 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-700">Folders</p>
         <div className="space-y-1">
           {tree.length > 0 ? (
             tree.map(node => <FolderRow key={node.id} node={node} depth={0} />)
@@ -132,7 +132,7 @@ const FolderSidebar: React.FC<FolderSidebarProps> = ({ folders, smartCollections
 
       {userCollections.length > 0 && (
         <div className="space-y-3">
-          <p className="px-4 text-[9px] font-black uppercase tracking-[0.2em] text-zinc-700">Smart Collections</p>
+          <p className="px-4 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-700">Smart Collections</p>
           <div className="space-y-1">
             {userCollections.map(c => (
               <div key={c.id} className="group flex items-center">
@@ -142,7 +142,7 @@ const FolderSidebar: React.FC<FolderSidebarProps> = ({ folders, smartCollections
                 </NavLink>
                 <button
                   onClick={() => onDeleteSmartCollection(c.id)}
-                  className="w-6 h-6 shrink-0 text-zinc-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="hover-reveal w-8 h-8 shrink-0 text-zinc-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
                   title="Delete smart collection"
                 >
                   <i className="fa-solid fa-xmark text-[10px]"></i>

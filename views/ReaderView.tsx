@@ -80,7 +80,7 @@ const ReaderView: React.FC = () => {
         <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-[11px] font-black uppercase tracking-widest">
           <i className="fa-solid fa-arrow-left"></i> Back
         </button>
-        <div className="flex items-center bg-[#151518] border border-white/[0.04] rounded-full p-1 shadow-xl">
+        <div className="flex items-center bg-[#0D1B2B] border border-white/[0.04] rounded-full p-1 shadow-xl">
           <button onClick={() => setFontSizeIdx(i => Math.max(0, i - 1))} className="w-9 h-9 rounded-full flex items-center justify-center text-zinc-500 hover:text-white transition-all" title="Smaller text">
             <i className="fa-solid fa-minus text-[10px]"></i>
           </button>
@@ -101,7 +101,7 @@ const ReaderView: React.FC = () => {
             </div>
             <h1 className="text-4xl font-black tracking-tighter leading-tight">{item.title || item.url}</h1>
             <a href={item.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-neon-accent hover:underline">
-              Open original <i className="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
+              Open original <i className="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
             </a>
           </div>
 

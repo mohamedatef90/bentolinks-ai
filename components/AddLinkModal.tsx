@@ -36,11 +36,11 @@ const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl animate-in fade-in duration-300">
-      <div className="bg-[#151518] border border-white/10 w-full max-w-xl rounded-[3rem] overflow-hidden shadow-[0_0_80px_rgba(0,0,0,0.6)] animate-in slide-in-from-bottom-12 duration-500">
+      <div className="bg-[#0D1B2B] border border-white/10 w-full max-w-xl rounded-[3rem] overflow-hidden shadow-[0_0_80px_rgba(0,0,0,0.6)] animate-in slide-in-from-bottom-12 duration-500">
         <div className="p-10 border-b border-white/5 flex justify-between items-start bg-white/[0.01]">
           <div>
             <div className="flex items-center gap-2 mb-2">
-               <div className="w-2 h-2 bg-[#c1ff00] rounded-full animate-pulse"></div>
+               <div className="w-2 h-2 bg-[#A8CF38] rounded-full animate-pulse"></div>
                <span className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">System Ready</span>
             </div>
             <h2 className="text-4xl font-black tracking-tighter">New Entry</h2>
@@ -57,7 +57,7 @@ const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories
               type="url"
               required
               autoFocus
-              className="w-full bg-zinc-900/40 border border-white/5 rounded-[1.5rem] px-6 py-5 text-sm focus:outline-none focus:ring-2 focus:ring-[#c1ff00]/30 focus:bg-zinc-900 transition-all font-bold"
+              className="w-full bg-[#0A1320]/40 border border-white/5 rounded-[1.5rem] px-6 py-5 text-sm focus:outline-none focus:ring-2 focus:ring-[#A8CF38]/30 focus:bg-[#0A1320] transition-all font-bold"
               placeholder="https://cloud.hub.io"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
@@ -71,7 +71,7 @@ const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories
             <label className="text-[11px] uppercase tracking-[0.2em] font-black text-zinc-600 px-1">Folder (optional)</label>
             <div className="relative">
               <select
-                className="w-full bg-zinc-900/40 border border-white/5 rounded-[1.5rem] px-6 py-5 text-sm focus:outline-none focus:ring-2 focus:ring-white/10 transition-all appearance-none cursor-pointer font-bold"
+                className="w-full bg-[#0A1320]/40 border border-white/5 rounded-[1.5rem] px-6 py-5 text-sm focus:outline-none focus:ring-2 focus:ring-white/10 transition-all appearance-none cursor-pointer font-bold"
                 value={folderId}
                 onChange={(e) => setFolderId(e.target.value)}
               >
@@ -85,7 +85,7 @@ const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories
           </div>
 
           <div className="flex items-center gap-3 px-1 text-zinc-500">
-            <i className="fa-solid fa-wand-magic-sparkles text-[#c1ff00] text-xs"></i>
+            <i className="fa-solid fa-wand-magic-sparkles text-[#A8CF38] text-xs"></i>
             <p className="text-[10px] font-bold uppercase tracking-widest">
               Content, summary, tags &amp; topic are extracted automatically after save
             </p>
@@ -102,7 +102,7 @@ const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories
             <button
               type="submit"
               disabled={isSaving}
-              className="flex-[2] py-5 bg-white text-black font-black rounded-[1.5rem] hover:bg-[#c1ff00] transition-all text-[11px] uppercase tracking-[0.2em] shadow-2xl shadow-white/5 disabled:opacity-50"
+              className="flex-[2] py-5 bg-white text-black font-black rounded-[1.5rem] hover:bg-[#A8CF38] transition-all text-[11px] uppercase tracking-[0.2em] shadow-2xl shadow-white/5 disabled:opacity-50"
             >
               {isSaving ? (
                 <><i className="fa-solid fa-spinner fa-spin mr-2"></i>Saving...</>
