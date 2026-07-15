@@ -3,6 +3,14 @@ export type ItemStatus = 'pending' | 'parsing' | 'enriching' | 'ready' | 'degrad
 export type SourceType =
   | 'article' | 'youtube' | 'reel' | 'tweet' | 'pdf' | 'rss' | 'reddit' | 'podcast' | 'other';
 
+/**
+ * The two conceptual buckets a saved link falls into:
+ *   'bookmark' — a plain website link with no readable body (lives in Vault Hub)
+ *   'content'  — an article / social post / video / pdf / feed (lives in Library)
+ * Computed server-side as a generated column on content_items.
+ */
+export type ItemKind = 'bookmark' | 'content';
+
 /** Which client saved the item (web app, Linkat mobile, extension, bulk import, RSS poller). */
 export type SavedVia = 'web' | 'mobile' | 'extension' | 'import' | 'rss';
 
@@ -19,6 +27,7 @@ export interface ContentItem {
   tags: string[];
   topic: string | null;
   source_type: SourceType;
+  item_kind?: ItemKind;
   status: ItemStatus;
   saved_via: SavedVia;
   site_name: string | null;
@@ -54,6 +63,7 @@ export interface SmartCollection {
 
 /** Filter descriptor — same jsonb shape stored in smart_collections.query. */
 export interface FilterState {
+  kind?: ItemKind;
   source_type?: SourceType[];
   saved_via?: SavedVia[];
   read_status?: ('unread' | 'reading' | 'read')[];
@@ -107,6 +117,7 @@ export interface Link {
   thumbnailUrl?: string | null;
   sourceType?: SourceType;
   savedVia?: SavedVia;
+  kind?: ItemKind;
 }
 
 export interface Category {

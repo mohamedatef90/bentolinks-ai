@@ -5,7 +5,7 @@ import { supabase } from './supabase';
 import { ContentItem, Link, Category, Folder, SmartCollection, FilterState, RssSubscription, FeedCandidate } from '../types';
 
 const ITEM_COLUMNS =
-  'id, url, title, description, summary, key_points, tags, topic, source_type, status, saved_via, ' +
+  'id, url, title, description, summary, key_points, tags, topic, source_type, item_kind, status, saved_via, ' +
   'site_name, thumbnail_url, favicon_url, is_pinned, is_starred, read_status, section, ' +
   'published_at, created_at, item_folders(folder_id)';
 
@@ -41,6 +41,7 @@ export function toLink(item: ContentItem): Link {
     favicon: item.favicon_url || undefined,
     sourceType: item.source_type,
     savedVia: item.saved_via,
+    kind: item.item_kind ?? (item.source_type === 'article' && !item.summary ? 'bookmark' : 'content'),
   };
 }
 
@@ -88,6 +89,7 @@ export const api = {
         ? ITEM_COLUMNS + ', daily_picks!inner(item_id)'
         : ITEM_COLUMNS;
       let query = supabase.from('content_items').select(columns);
+      if (filter.kind) query = query.eq('item_kind', filter.kind);
       if (filter.source_type?.length) query = query.in('source_type', filter.source_type);
       if (filter.saved_via?.length) query = query.in('saved_via', filter.saved_via);
       if (filter.read_status?.length) query = query.in('read_status', filter.read_status);

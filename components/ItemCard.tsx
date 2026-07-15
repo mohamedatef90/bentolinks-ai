@@ -41,17 +41,38 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
   const readMeta = READ_STATUS_META[item.read_status];
   const title = item.title || item.url;
   const dateLabel = formatDate(item.published_at) || formatDate(item.created_at);
+  const isBookmark = item.item_kind === 'bookmark';
+  // A plain website link reads as "bookmark", not its raw source_type ("article").
+  const typeLabel = isBookmark ? 'bookmark' : item.source_type;
 
-  const openReader = () => navigate(`/item/${item.id}`);
-  // Let the inner controls (star, read-status, Visit site) act without opening the reader.
+  // Top-right type marker: book for readable content, bookmark for a plain link.
+  const typeBadge = isBookmark
+    ? { icon: 'fa-bookmark', cls: 'text-zinc-300 bg-white/[0.05] border-white/10', label: 'Bookmark' }
+    : { icon: 'fa-book-open', cls: 'text-[#A8CF38] bg-[#A8CF38]/10 border-[#A8CF38]/30', label: 'Article' };
+
+  // Primary action on content cards: Read / Continue reading / Read again.
+  const readAction = item.read_status === 'reading'
+    ? { label: 'Continue reading', icon: 'fa-book-open-reader' }
+    : item.read_status === 'read'
+      ? { label: 'Read again', icon: 'fa-rotate-left' }
+      : { label: 'Read', icon: 'fa-book-open' };
+
+  // Bookmarks have no reader content — the card opens the source directly.
+  // Content opens the in-app reader (summary, key points, TTS).
+  const openCard = () => {
+    if (isBookmark) { window.open(item.url, '_blank', 'noopener,noreferrer'); return; }
+    navigate(`/item/${item.id}`);
+  };
+  // Let the inner controls (star, read-status, Visit site) act without triggering the card.
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return (
     <div
       role="link"
       tabIndex={0}
-      onClick={openReader}
-      onKeyDown={(e) => { if (e.key === 'Enter') openReader(); }}
+      onClick={openCard}
+      onKeyDown={(e) => { if (e.key === 'Enter') openCard(); }}
+      title={isBookmark ? 'Open source link' : 'Open in reader'}
       className={`bento-card spot group relative p-5 transition-all hover:border-white/10 shadow-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8CF38]/60 ${
       viewMode === 'list' ? 'flex items-center gap-5' : 'flex flex-col h-full'
     }`} onMouseMove={spotlight}>
@@ -75,23 +96,36 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
           </div>
         </div>
 
-        <div className={`hover-reveal flex items-center gap-1 shrink-0 ${viewMode === 'grid' ? 'opacity-0 group-hover:opacity-100' : ''} transition-all`}>
-          <button
-            onClick={(e) => { stop(e); onCycleReadStatus(item.id); }}
-            className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/5 text-zinc-500 hover:text-white transition-all"
-            title={`Read status: ${readMeta.label} (click to advance)`}
-            aria-label={`Read status: ${readMeta.label}`}
-          >
-            <i className={`${readMeta.icon} text-xs`}></i>
-          </button>
-          <button
-            onClick={(e) => { stop(e); onToggleStar(item.id); }}
-            className={`w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/5 transition-all ${item.is_starred ? 'text-[#A8CF38]' : 'text-zinc-600 hover:text-white'}`}
-            title="Toggle starred"
-            aria-label="Toggle starred"
-          >
-            <i className={`fa-solid fa-star text-xs ${item.is_starred ? '' : 'opacity-50'}`}></i>
-          </button>
+        <div className="relative shrink-0 flex items-center justify-end min-w-[84px] self-start">
+          {/* Default: persistent type marker (book = content, bookmark = link). */}
+          {viewMode === 'grid' && (
+            <span
+              aria-label={typeBadge.label}
+              title={typeBadge.label}
+              className={`w-9 h-9 rounded-xl border grid place-items-center transition-opacity duration-200 group-hover:opacity-0 ${typeBadge.cls}`}
+            >
+              <i className={`fa-solid ${typeBadge.icon} text-xs`}></i>
+            </span>
+          )}
+          {/* Hover: read-status + star controls cross-fade in over the badge. */}
+          <div className={`hover-reveal flex items-center gap-1 ${viewMode === 'grid' ? 'absolute right-0 top-0 opacity-0 group-hover:opacity-100' : ''} transition-opacity`}>
+            <button
+              onClick={(e) => { stop(e); onCycleReadStatus(item.id); }}
+              className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/5 text-zinc-500 hover:text-white transition-all"
+              title={`Read status: ${readMeta.label} (click to advance)`}
+              aria-label={`Read status: ${readMeta.label}`}
+            >
+              <i className={`${readMeta.icon} text-xs`}></i>
+            </button>
+            <button
+              onClick={(e) => { stop(e); onToggleStar(item.id); }}
+              className={`w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/5 transition-all ${item.is_starred ? 'text-[#A8CF38]' : 'text-zinc-600 hover:text-white'}`}
+              title="Toggle starred"
+              aria-label="Toggle starred"
+            >
+              <i className={`fa-solid fa-star text-xs ${item.is_starred ? '' : 'opacity-50'}`}></i>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -115,31 +149,50 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
           )}
           <div className="flex items-center justify-between pt-4 border-t border-white/[0.04]">
             <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 flex items-center gap-2 min-w-0">
-              <span className="truncate">{item.source_type}</span>
+              <span className="truncate">{typeLabel}</span>
               {dateLabel && <><span className="text-zinc-700">·</span><span className="text-zinc-500 normal-case tracking-normal font-bold shrink-0">{dateLabel}</span></>}
             </span>
-            <a href={item.url} target="_blank" rel="noopener noreferrer" onClick={stop}
-              className="shrink-0 ml-2 bg-white/10 text-white hover:bg-[#A8CF38] hover:text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20">
-              Visit site
-            </a>
+            {isBookmark ? (
+              <a href={item.url} target="_blank" rel="noopener noreferrer" onClick={stop}
+                className="shrink-0 ml-2 inline-flex items-center gap-2 bg-white/10 text-white hover:bg-[#A8CF38] hover:text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20">
+                <i className="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>Visit site
+              </a>
+            ) : (
+              <button onClick={(e) => { stop(e); navigate(`/item/${item.id}`); }}
+                className="shrink-0 ml-2 inline-flex items-center gap-2 text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20 hover:brightness-110"
+                style={{ background: 'var(--grad)' }}>
+                <i className={`fa-solid ${readAction.icon} text-[10px]`}></i>{readAction.label}
+              </button>
+            )}
           </div>
         </>
       )}
 
       {viewMode === 'list' && (
         <div className="hidden md:flex items-center gap-3 shrink-0">
+          <span className={`w-8 h-8 rounded-lg border grid place-items-center ${typeBadge.cls}`} title={typeBadge.label} aria-label={typeBadge.label}>
+            <i className={`fa-solid ${typeBadge.icon} text-[11px]`}></i>
+          </span>
           {status ? (
             <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-widest ${status.className}`}>
               {status.spin && <i className="fa-solid fa-spinner fa-spin text-[10px]"></i>}
               {status.label}
             </div>
           ) : (
-            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600">{item.source_type}</span>
+            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600">{typeLabel}</span>
           )}
-          <a href={item.url} target="_blank" rel="noopener noreferrer" onClick={stop}
-            className="bg-white/10 text-white hover:bg-[#A8CF38] hover:text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20">
-            Visit
-          </a>
+          {isBookmark ? (
+            <a href={item.url} target="_blank" rel="noopener noreferrer" onClick={stop}
+              className="inline-flex items-center gap-2 bg-white/10 text-white hover:bg-[#A8CF38] hover:text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20">
+              <i className="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>Visit
+            </a>
+          ) : (
+            <button onClick={(e) => { stop(e); navigate(`/item/${item.id}`); }}
+              className="inline-flex items-center gap-2 text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20 hover:brightness-110"
+              style={{ background: 'var(--grad)' }}>
+              <i className={`fa-solid ${readAction.icon} text-[10px]`}></i>{readAction.label}
+            </button>
+          )}
         </div>
       )}
     </div>

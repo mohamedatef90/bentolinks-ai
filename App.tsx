@@ -90,6 +90,8 @@ const App: React.FC = () => {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [draggedPinnedId, setDraggedPinnedId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
 
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'link' | 'category', id: string, name: string } | null>(null);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, active: false });
@@ -191,6 +193,23 @@ const App: React.FC = () => {
     const timer = setInterval(() => setCurrentTime(new Date()), 30_000);
     return () => clearInterval(timer);
   }, []);
+
+  // Close the account menu on outside click / Escape.
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAccountMenuOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [accountMenuOpen]);
 
   const addLink = async (url: string, folderId?: string) => {
     const result = await api.items.save(url, folderId);
@@ -389,9 +408,14 @@ const App: React.FC = () => {
     setDraggedPinnedId(null);
   };
 
-  // The home grid ("Primary Feed") shows only bookmarked URLs — RSS articles
-  // live in /feeds, the Library and the RSS collection.
-  const vaultLinks = useMemo<Link[]>(() => links.filter(l => l.sourceType !== 'rss'), [links]);
+  // Vault Hub is the home for BOOKMARKS — plain website links you saved to
+  // reference. Articles, social posts and videos are "content" and live in the
+  // Library; RSS lives in /feeds. `item_kind` is computed server-side.
+  const vaultLinks = useMemo<Link[]>(() => links.filter(l => l.kind === 'bookmark'), [links]);
+
+  // Readable/watchable content — the Library's material. Surfaced on the home
+  // only as bridges (continue reading, latest) that deep-link into /library.
+  const libraryLinks = useMemo<Link[]>(() => links.filter(l => l.kind === 'content'), [links]);
 
   const feedLinks = useMemo<Link[]>(
     () => links.filter(l => l.sourceType === 'rss').slice(0, 8),
@@ -427,10 +451,13 @@ const App: React.FC = () => {
     );
   }, [vaultLinks, searchQuery]);
 
+  // "Reading" is a content concept — this section bridges the home into /library.
   const continueReading = useMemo<Link[]>(
-    () => vaultLinks.filter(l => l.readStatus === 'reading').slice(0, 6),
-    [vaultLinks]
+    () => libraryLinks.filter(l => l.readStatus === 'reading').slice(0, 6),
+    [libraryLinks]
   );
+
+  const latestContent = useMemo<Link[]>(() => libraryLinks.slice(0, 6), [libraryLinks]);
 
   const recentlySaved = useMemo<Link[]>(() => vaultLinks.slice(0, 12), [vaultLinks]);
 
@@ -450,9 +477,10 @@ const App: React.FC = () => {
     // unread + this-week are actionable numbers instead.
     unread: vaultLinks.filter(l => (l.readStatus ?? 'unread') === 'unread').length,
     thisWeek: vaultLinks.filter(l => Date.now() - l.createdAt < 7 * 86_400_000).length,
+    library: libraryLinks.length,
     feeds: links.filter(l => l.sourceType === 'rss').length,
     processing: processingLinks.length,
-  }), [links, vaultLinks, processingLinks]);
+  }), [links, vaultLinks, libraryLinks, processingLinks]);
 
   const greeting = useMemo(() => {
     const h = currentTime.getHours();
@@ -461,6 +489,16 @@ const App: React.FC = () => {
     if (h < 18) return 'Good afternoon';
     return 'Good evening';
   }, [currentTime]);
+
+  const accountName = useMemo(() => {
+    const local = (session?.user?.email ?? 'User').split('@')[0];
+    return local.charAt(0).toUpperCase() + local.slice(1);
+  }, [session]);
+  const accountInitials = useMemo(() => {
+    const local = (session?.user?.email ?? 'U').split('@')[0];
+    const parts = local.split(/[._-]+/).filter(Boolean);
+    return ((parts[0]?.[0] ?? 'U') + (parts[1]?.[0] ?? '')).toUpperCase();
+  }, [session]);
 
   const formattedTime = currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
   const formattedDate = currentTime.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -518,8 +556,6 @@ const App: React.FC = () => {
           <div className="hidden lg:flex items-center bg-[#0D1B2B] border border-white/[0.04] rounded-full p-1.5 shadow-xl">
             <NavLink to="/" end className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Vault Hub</NavLink>
             <NavLink to="/library" className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Library</NavLink>
-            <NavLink to="/feeds" className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Feeds</NavLink>
-            <NavLink to="/settings" className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Configuration</NavLink>
           </div>
         </div>
 
@@ -530,18 +566,84 @@ const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className={`px-3 py-1 bg-white/5 border border-emerald-500/30 rounded-full hidden md:flex items-center gap-2`}>
-              <div className={`w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse`}></div>
-              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">
-                Cloud Live
-              </span>
+            <div className="relative" ref={accountMenuRef}>
+              <button
+                onClick={() => setAccountMenuOpen(o => !o)}
+                className="relative w-10 h-10 rounded-full grid place-items-center cursor-pointer group/av"
+                aria-haspopup="menu"
+                aria-expanded={accountMenuOpen}
+                aria-label="Account menu"
+              >
+                {/* Gradient ring — solid when open, faint until hovered */}
+                <span
+                  className="absolute inset-0 rounded-full transition-opacity duration-300"
+                  style={{ background: 'var(--grad)', opacity: accountMenuOpen ? 1 : 0 }}
+                ></span>
+                <span className="absolute inset-0 rounded-full border border-white/10 opacity-100 group-hover/av:opacity-0 transition-opacity"></span>
+                <span className="relative w-[30px] h-[30px] rounded-full overflow-hidden bg-[#16283F] grid place-items-center">
+                  <span className="text-[11px] font-black text-zinc-200 uppercase tracking-tight">{accountInitials}</span>
+                </span>
+                {/* Live status dot */}
+                <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#0A1320] grid place-items-center">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                </span>
+              </button>
+
+              {accountMenuOpen && (
+                <div
+                  role="menu"
+                  className="fixed top-[88px] right-4 lg:right-12 w-72 bento-card p-0 overflow-hidden shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 duration-200"
+                >
+                  {/* Profile header — monogram tile + email + synced status */}
+                  <div className="relative p-4 flex items-center gap-3 border-b border-white/[0.06] bg-white/[0.02]">
+                    <div className="w-11 h-11 rounded-2xl grid place-items-center text-black font-black text-base shrink-0 shadow-lg" style={{ background: 'var(--grad)' }}>
+                      {accountInitials}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-bold text-white truncate leading-tight">{accountName}</p>
+                      <p className="text-[11px] text-zinc-500 truncate">{session?.user?.email}</p>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400/80">Cloud synced</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="p-2">
+                    <NavLink
+                      to="/settings"
+                      role="menuitem"
+                      onClick={() => setAccountMenuOpen(false)}
+                      className="group/item flex items-center gap-3 px-2.5 py-2.5 rounded-xl hover:bg-white/[0.04] transition-colors"
+                    >
+                      <span className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.06] grid place-items-center text-zinc-400 group-hover/item:text-[color:var(--lime)] group-hover/item:border-[color:var(--lime)]/30 transition-colors">
+                        <i className="fa-solid fa-sliders text-xs"></i>
+                      </span>
+                      <span className="flex-grow min-w-0">
+                        <span className="block text-xs font-bold text-zinc-200">Configuration</span>
+                        <span className="block text-[10px] text-zinc-600">Theme, folders &amp; categories</span>
+                      </span>
+                      <i className="fa-solid fa-chevron-right text-[9px] text-zinc-700 -translate-x-1 opacity-0 group-hover/item:translate-x-0 group-hover/item:opacity-100 transition-all"></i>
+                    </NavLink>
+                  </div>
+
+                  <div className="px-2 pb-2">
+                    <div className="h-px bg-white/[0.05] mx-2 mb-2"></div>
+                    <button
+                      role="menuitem"
+                      onClick={() => { setAccountMenuOpen(false); handleLogout(); }}
+                      className="group/item w-full flex items-center gap-3 px-2.5 py-2.5 rounded-xl hover:bg-red-500/[0.08] transition-colors"
+                    >
+                      <span className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.06] grid place-items-center text-zinc-400 group-hover/item:text-red-400 group-hover/item:border-red-500/30 transition-colors">
+                        <i className="fa-solid fa-arrow-right-from-bracket text-xs"></i>
+                      </span>
+                      <span className="text-xs font-bold text-zinc-300 group-hover/item:text-red-400 transition-colors">Sign out</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-            <button onClick={handleLogout} className="w-9 h-9 rounded-full bg-[#16283F] border border-white/10 overflow-hidden cursor-pointer hover:border-red-500 transition-all group relative">
-              <img src={`https://ui-avatars.com/api/?name=${session?.user?.email || 'Local'}&background=c1ff00&color=000`} alt="avatar" />
-              <div className="absolute inset-0 bg-red-500/80 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
-                <i className="fa-solid fa-power-off text-xs"></i>
-              </div>
-            </button>
           </div>
         </div>
       </nav>
@@ -579,17 +681,17 @@ const App: React.FC = () => {
                     </p>
                   </div>
                   <div className="grid grid-cols-3 gap-3">
-                    <NavLink to="/library" className="group/stat rounded-2xl bg-white/[0.03] border border-white/[0.05] px-3 py-2.5 hover:border-white/15 transition-colors">
+                    <NavLink to="/library?kind=bookmark" className="group/stat rounded-2xl bg-white/[0.03] border border-white/[0.05] px-3 py-2.5 hover:border-white/15 transition-colors">
                       <CountUp value={stats.total} className="text-xl xl:text-2xl font-black grad-text font-display block" />
-                      <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider whitespace-nowrap group-hover/stat:text-zinc-300 transition-colors">Saved</span>
+                      <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider whitespace-nowrap group-hover/stat:text-zinc-300 transition-colors">Bookmarks</span>
+                    </NavLink>
+                    <NavLink to="/library" className="group/stat rounded-2xl bg-white/[0.03] border border-white/[0.05] px-3 py-2.5 hover:border-white/15 transition-colors">
+                      <CountUp value={stats.library} className="text-xl xl:text-2xl font-black text-white font-display block" />
+                      <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider whitespace-nowrap group-hover/stat:text-zinc-300 transition-colors">Library</span>
                     </NavLink>
                     <NavLink to={queueCollectionId ? `/collection/${queueCollectionId}` : '/library'} className="group/stat rounded-2xl bg-white/[0.03] border border-white/[0.05] px-3 py-2.5 hover:border-white/15 transition-colors">
-                      <CountUp value={stats.unread} className="text-xl xl:text-2xl font-black text-white font-display block" />
+                      <CountUp value={stats.unread} className="text-xl xl:text-2xl font-black text-zinc-400 font-display block" />
                       <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider whitespace-nowrap group-hover/stat:text-zinc-300 transition-colors">Unread</span>
-                    </NavLink>
-                    <NavLink to="/library" className="group/stat rounded-2xl bg-white/[0.03] border border-white/[0.05] px-3 py-2.5 hover:border-white/15 transition-colors">
-                      <CountUp value={stats.thisWeek} className="text-xl xl:text-2xl font-black text-zinc-400 font-display block" />
-                      <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider whitespace-nowrap group-hover/stat:text-zinc-300 transition-colors">7 days</span>
                     </NavLink>
                   </div>
                 </div>
@@ -783,8 +885,8 @@ const App: React.FC = () => {
               <div className="py-24 text-center space-y-4">
                 <i className="fa-solid fa-box-open text-4xl text-zinc-800"></i>
                 <div className="space-y-1">
-                  <p className="text-zinc-500 font-black uppercase tracking-widest text-xs">The vault is empty</p>
-                  <p className="text-zinc-700 text-[10px] font-bold">Save a URL and the AI pipeline will parse, summarize and tag it.</p>
+                  <p className="text-zinc-500 font-black uppercase tracking-widest text-xs">No bookmarks yet</p>
+                  <p className="text-zinc-700 text-[10px] font-bold">Save a website link and it lands here. Articles, videos and posts go to your Library.</p>
                 </div>
               </div>
             ) : (
@@ -850,12 +952,32 @@ const App: React.FC = () => {
                   </Reveal>
                 )}
 
+                {latestContent.length > 0 && (
+                  <Reveal>
+                    <section className="space-y-6">
+                      <div className="flex items-center gap-4">
+                        <span className="eyebrow">Fresh in your Library</span>
+                        <div className="h-px flex-grow bg-white/5"></div>
+                        <NavLink to="/library" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                          Open Library {stats.library.toLocaleString()} <i className="fa-solid fa-arrow-right ml-1"></i>
+                        </NavLink>
+                      </div>
+                      <p className="-mt-3 text-[11px] font-bold text-zinc-600 max-w-xl">Articles, videos and social posts — the readable stuff, summarized and searchable.</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                        {latestContent.map(link => (
+                          <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
+                        ))}
+                      </div>
+                    </section>
+                  </Reveal>
+                )}
+
                 <Reveal>
                   <section className="space-y-6">
                     <div className="flex items-center gap-4">
-                      <span className="eyebrow">Recently saved</span>
+                      <span className="eyebrow">Recently bookmarked</span>
                       <div className="h-px flex-grow bg-white/5"></div>
-                      <NavLink to="/library" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                      <NavLink to="/library?kind=bookmark" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
                         View all {vaultLinks.length.toLocaleString()} <i className="fa-solid fa-arrow-right ml-1"></i>
                       </NavLink>
                     </div>

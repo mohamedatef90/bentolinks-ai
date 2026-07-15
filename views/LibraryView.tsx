@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
-import { ContentItem, FilterState, Folder, SmartCollection } from '../types';
+import { ContentItem, FilterState, Folder, ItemKind, SmartCollection } from '../types';
 import FilterBar from '../components/FilterBar';
 import ItemCard from '../components/ItemCard';
 import ReaderSplit from '../components/ReaderSplit';
@@ -45,7 +45,25 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<ContentItem[]>([]);
   const filter = useMemo(() => filterFromParams(searchParams), [searchParams]);
-  const setFilter = (f: FilterState) => setSearchParams(paramsFromFilter(f), { replace: true });
+
+  // The Reading/Bookmarks/All tab is orthogonal to the facet filters, so it
+  // rides in its own `kind` param. Absent = "content" (the Library's default —
+  // articles, videos and social posts); bookmarks live primarily in Vault Hub.
+  const kindParam = searchParams.get('kind');
+  const kindTab: 'content' | 'bookmark' | 'all' =
+    kindParam === 'bookmark' ? 'bookmark' : kindParam === 'all' ? 'all' : 'content';
+  const effectiveKind: ItemKind | undefined = kindTab === 'all' ? undefined : kindTab;
+
+  const setFilter = (f: FilterState) => {
+    const p = paramsFromFilter(f);
+    if (kindParam) p.kind = kindParam;
+    setSearchParams(p, { replace: true });
+  };
+  const setKindTab = (tab: 'content' | 'bookmark' | 'all') => {
+    const p = paramsFromFilter(filter);
+    if (tab !== 'content') p.kind = tab; // 'content' is the default → keep the URL clean
+    setSearchParams(p, { replace: true });
+  };
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'reader'>(() =>
     (localStorage.getItem('library-view') as 'grid' | 'list' | 'reader') || 'grid');
 
@@ -74,7 +92,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
         } else if (mode === 'inbox') {
           data = await api.items.fetchByFilter({ sort: 'date_desc' });
         } else {
-          data = await api.items.fetchByFilter(filter);
+          data = await api.items.fetchByFilter({ ...filter, kind: effectiveKind });
         }
         if (!cancelled) setItems(data);
       } catch (err) {
@@ -86,7 +104,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
     };
     load();
     return () => { cancelled = true; };
-  }, [mode, folderId, collectionId, filter, searchQuery, activeCollection]);
+  }, [mode, folderId, collectionId, filter, effectiveKind, searchQuery, activeCollection]);
 
   const availableTags = useMemo(() => {
     const set = new Set<string>();
@@ -140,9 +158,15 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
   };
 
   const title = mode === 'inbox' ? 'Inbox'
-    : mode === 'library' ? 'Library'
+    : mode === 'library' ? (kindTab === 'bookmark' ? 'Bookmarks' : 'Library')
     : mode === 'folder' ? (activeFolder?.name ?? 'Folder')
     : (activeCollection?.name ?? 'Collection');
+
+  const KIND_TABS: { key: 'content' | 'bookmark' | 'all'; label: string; icon: string; hint: string }[] = [
+    { key: 'content', label: 'Reading', icon: 'fa-book-open', hint: 'Articles, videos & social posts' },
+    { key: 'bookmark', label: 'Bookmarks', icon: 'fa-bookmark', hint: 'Plain website links' },
+    { key: 'all', label: 'All', icon: 'fa-layer-group', hint: 'Everything you saved' },
+  ];
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -166,6 +190,34 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
           </button>
         </div>
       </div>
+
+      {mode === 'library' && !searchQuery.trim() && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center bg-[#0D1B2B] border border-white/[0.05] rounded-2xl p-1 shadow-xl">
+            {KIND_TABS.map(t => {
+              const active = kindTab === t.key;
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setKindTab(t.key)}
+                  title={t.hint}
+                  aria-pressed={active}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
+                    active ? 'text-black shadow-lg' : 'text-zinc-500 hover:text-zinc-200'
+                  }`}
+                  style={active ? { background: 'var(--grad)' } : undefined}
+                >
+                  <i className={`fa-solid ${t.icon} text-[11px]`}></i>
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+          <span className="text-[10px] font-bold text-zinc-600 hidden sm:block">
+            {KIND_TABS.find(t => t.key === kindTab)?.hint}
+          </span>
+        </div>
+      )}
 
       {(mode === 'library' || mode === 'inbox') && !searchQuery.trim() && (
         <FilterBar
@@ -193,7 +245,14 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
             starred: { icon: 'fa-star', title: 'No starred items', hint: 'Tap the star on any card to keep it within reach.' },
           };
           const sys = mode === 'collection' ? (activeCollection?.query as FilterState | undefined)?.system : undefined;
-          const empty = (sys && SYSTEM_EMPTY[sys]) || {
+          const LIBRARY_EMPTY = mode === 'library'
+            ? kindTab === 'bookmark'
+              ? { icon: 'fa-bookmark', title: 'No bookmarks here', hint: 'Plain website links you save land in your Vault Hub and show up here.' }
+              : kindTab === 'content'
+                ? { icon: 'fa-book-open', title: 'No readable content yet', hint: 'Save an article, video, PDF or social post — once the AI pipeline extracts the text, it appears here.' }
+                : undefined
+            : undefined;
+          const empty = (sys && SYSTEM_EMPTY[sys]) || LIBRARY_EMPTY || {
             icon: 'fa-box-open',
             title: 'Nothing here yet',
             hint: 'Save a URL and the AI pipeline will parse, summarize and tag it.',

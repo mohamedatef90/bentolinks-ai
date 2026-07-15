@@ -47,17 +47,34 @@ const LinkCard: React.FC<LinkCardProps> = ({
   const status = link.status && link.status !== 'ready' ? STATUS_META[link.status] : null;
   const isProcessing = !!status?.spin;
   const readMeta = READ_META[link.readStatus ?? 'unread'];
+  const isBookmark = link.kind === 'bookmark';
 
-  const openReader = () => navigate(`/item/${link.id}`);
-  // Inner controls (pin, delete, star, read-status, folder select, Visit site) act without opening the reader.
+  // Top-right type marker: book for readable content, bookmark for a plain link.
+  const typeBadge = isBookmark
+    ? { icon: 'fa-bookmark', cls: 'text-zinc-300 bg-white/[0.05] border-white/10', label: 'Bookmark' }
+    : { icon: 'fa-book-open', cls: 'text-[#A8CF38] bg-[#A8CF38]/10 border-[#A8CF38]/30', label: 'Article' };
+
+  const readAction = link.readStatus === 'reading'
+    ? { label: 'Continue reading', icon: 'fa-book-open-reader' }
+    : link.readStatus === 'read'
+      ? { label: 'Read again', icon: 'fa-rotate-left' }
+      : { label: 'Read', icon: 'fa-book-open' };
+
+  // Bookmarks open the source directly (no reader content); content opens the reader.
+  const openCard = () => {
+    if (isBookmark) { window.open(link.url, '_blank', 'noopener,noreferrer'); return; }
+    navigate(`/item/${link.id}`);
+  };
+  // Inner controls (pin, delete, star, read-status, folder select, Visit site) act without triggering the card.
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return (
     <div
       role="link"
       tabIndex={0}
-      onClick={openReader}
-      onKeyDown={(e) => { if (e.key === 'Enter') openReader(); }}
+      onClick={openCard}
+      onKeyDown={(e) => { if (e.key === 'Enter') openCard(); }}
+      title={isBookmark ? 'Open source link' : 'Open in reader'}
       className="bento-card spot group relative p-5 transition-all duration-300 hover:border-white/10 flex flex-col h-full shadow-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8CF38]/60"
       onMouseMove={spotlight}
     >
@@ -81,23 +98,34 @@ const LinkCard: React.FC<LinkCardProps> = ({
             </span>
           </div>
         </div>
-        <div className="hover-reveal flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-          <button
-            onClick={(e) => { stop(e); onTogglePin?.(link.id); }}
-            className={`w-10 h-10 flex items-center justify-center transition-all rounded-full hover:bg-white/5 ${link.isPinned ? 'text-[#A8CF38]' : 'text-zinc-600 hover:text-white'}`}
-            title="Pin Link"
-            aria-label="Pin link"
+        <div className="relative shrink-0 flex items-center justify-end min-w-[84px] self-start">
+          {/* Default: persistent type marker (book = content, bookmark = link). */}
+          <span
+            aria-label={typeBadge.label}
+            title={typeBadge.label}
+            className={`w-9 h-9 rounded-xl border grid place-items-center transition-opacity duration-200 group-hover:opacity-0 ${typeBadge.cls}`}
           >
-            <i className={`fa-solid fa-thumbtack text-xs ${link.isPinned ? '' : 'opacity-50'}`}></i>
-          </button>
-          <button
-            onClick={(e) => { stop(e); onDelete(link.id); }}
-            className="w-10 h-10 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-all rounded-full hover:bg-red-400/10"
-            title="Delete Link"
-            aria-label="Delete link"
-          >
-            <i className="fa-solid fa-trash-can text-xs"></i>
-          </button>
+            <i className={`fa-solid ${typeBadge.icon} text-xs`}></i>
+          </span>
+          {/* Hover: pin + delete controls cross-fade in over the badge. */}
+          <div className="hover-reveal absolute right-0 top-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => { stop(e); onTogglePin?.(link.id); }}
+              className={`w-10 h-10 flex items-center justify-center transition-all rounded-full hover:bg-white/5 ${link.isPinned ? 'text-[#A8CF38]' : 'text-zinc-600 hover:text-white'}`}
+              title="Pin Link"
+              aria-label="Pin link"
+            >
+              <i className={`fa-solid fa-thumbtack text-xs ${link.isPinned ? '' : 'opacity-50'}`}></i>
+            </button>
+            <button
+              onClick={(e) => { stop(e); onDelete(link.id); }}
+              className="w-10 h-10 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-all rounded-full hover:bg-red-400/10"
+              title="Delete Link"
+              aria-label="Delete link"
+            >
+              <i className="fa-solid fa-trash-can text-xs"></i>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -163,15 +191,25 @@ const LinkCard: React.FC<LinkCardProps> = ({
               <i className={`fa-${link.isStarred ? 'solid' : 'regular'} fa-star text-xs`}></i>
             </button>
           )}
-          <a
-            href={link.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={stop}
-            className="ml-1 bg-white/10 text-white hover:bg-[#A8CF38] hover:text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20"
-          >
-            Visit site
-          </a>
+          {isBookmark ? (
+            <a
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={stop}
+              className="ml-1 inline-flex items-center gap-2 bg-white/10 text-white hover:bg-[#A8CF38] hover:text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20"
+            >
+              <i className="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>Visit site
+            </a>
+          ) : (
+            <button
+              onClick={(e) => { stop(e); navigate(`/item/${link.id}`); }}
+              className="ml-1 inline-flex items-center gap-2 text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20 hover:brightness-110"
+              style={{ background: 'var(--grad)' }}
+            >
+              <i className={`fa-solid ${readAction.icon} text-[10px]`}></i>{readAction.label}
+            </button>
+          )}
         </div>
       </div>
     </div>
