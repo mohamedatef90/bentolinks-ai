@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ContentItem, ItemStatus } from '../types';
+import { ContentItem, Folder, ItemStatus } from '../types';
 import { spotlight } from './magic';
 
 interface ItemCardProps {
@@ -8,6 +8,11 @@ interface ItemCardProps {
   viewMode: 'grid' | 'list';
   onToggleStar: (id: string) => void;
   onCycleReadStatus: (id: string) => void;
+  /** Re-enqueue the parse pipeline (for items where the AI fetch failed/missed data). */
+  onRetry?: (id: string) => void;
+  /** Folders act as categories; bookmark cards get a move-to-folder dropdown. */
+  folders?: Folder[];
+  onChangeFolder?: (itemId: string, folderId: string) => void;
 }
 
 const STATUS_META: Record<ItemStatus, { label: string; className: string; spin?: boolean }> = {
@@ -33,7 +38,7 @@ const formatDate = (iso: string | null | undefined): string | null => {
   return new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCycleReadStatus }) => {
+const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCycleReadStatus, onRetry, folders = [], onChangeFolder }) => {
   const navigate = useNavigate();
   let domain = '';
   try { domain = new URL(item.url).hostname; } catch { /* malformed url, ignore */ }
@@ -42,6 +47,9 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
   const title = item.title || item.url;
   const dateLabel = formatDate(item.published_at) || formatDate(item.created_at);
   const isBookmark = item.item_kind === 'bookmark';
+  const fromMobile = item.saved_via === 'mobile';
+  const isProcessing = item.status === 'pending' || item.status === 'parsing' || item.status === 'enriching';
+  const currentFolderId = item.item_folders?.[0]?.folder_id ?? '';
   // A plain website link reads as "bookmark", not its raw source_type ("article").
   const typeLabel = isBookmark ? 'bookmark' : item.source_type;
 
@@ -97,18 +105,40 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
         </div>
 
         <div className="relative shrink-0 flex items-center justify-end min-w-[84px] self-start">
-          {/* Default: persistent type marker (book = content, bookmark = link). */}
+          {/* Default: persistent type marker (book = content, bookmark = link) + mobile origin. */}
           {viewMode === 'grid' && (
-            <span
-              aria-label={typeBadge.label}
-              title={typeBadge.label}
-              className={`w-9 h-9 rounded-xl border grid place-items-center transition-opacity duration-200 group-hover:opacity-0 ${typeBadge.cls}`}
-            >
-              <i className={`fa-solid ${typeBadge.icon} text-xs`}></i>
-            </span>
+            <div className="flex items-center gap-1.5 transition-opacity duration-200 group-hover:opacity-0">
+              {fromMobile && (
+                <span
+                  aria-label="Saved from your phone"
+                  title="Saved from your phone (Linkat)"
+                  className="w-9 h-9 rounded-xl border grid place-items-center text-sky-300 bg-sky-400/10 border-sky-400/30"
+                >
+                  <i className="fa-solid fa-mobile-screen text-xs"></i>
+                </span>
+              )}
+              <span
+                aria-label={typeBadge.label}
+                title={typeBadge.label}
+                className={`w-9 h-9 rounded-xl border grid place-items-center ${typeBadge.cls}`}
+              >
+                <i className={`fa-solid ${typeBadge.icon} text-xs`}></i>
+              </span>
+            </div>
           )}
-          {/* Hover: read-status + star controls cross-fade in over the badge. */}
+          {/* Hover: refresh + read-status + star controls cross-fade in over the badges. */}
           <div className={`hover-reveal flex items-center gap-1 ${viewMode === 'grid' ? 'absolute right-0 top-0 opacity-0 group-hover:opacity-100' : ''} transition-opacity`}>
+            {onRetry && (
+              <button
+                onClick={(e) => { stop(e); if (!isProcessing) onRetry(item.id); }}
+                disabled={isProcessing}
+                className={`w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/5 transition-all ${isProcessing ? 'text-zinc-700 cursor-default' : 'text-zinc-500 hover:text-[#A8CF38]'}`}
+                title="Re-fetch data (re-runs the AI pipeline for this item)"
+                aria-label="Re-fetch data"
+              >
+                <i className={`fa-solid fa-rotate text-xs ${isProcessing ? 'fa-spin' : ''}`}></i>
+              </button>
+            )}
             <button
               onClick={(e) => { stop(e); onCycleReadStatus(item.id); }}
               className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/5 text-zinc-500 hover:text-white transition-all"
@@ -149,7 +179,26 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
           )}
           <div className="flex items-center justify-between pt-4 border-t border-white/[0.04]">
             <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 flex items-center gap-2 min-w-0">
-              <span className="truncate">{typeLabel}</span>
+              {isBookmark && onChangeFolder ? (
+                /* Folders act as categories — move the bookmark without leaving the grid.
+                   The select fills a clipped wrapper so it can never overlap the date. */
+                <span className="flex items-center gap-2 flex-1 min-w-0 overflow-hidden" onClick={stop}>
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${currentFolderId ? 'bg-[#A8CF38]' : 'bg-zinc-600'}`}></span>
+                  <select
+                    value={currentFolderId}
+                    onChange={(e) => onChangeFolder(item.id, e.target.value)}
+                    className="w-full min-w-0 bg-transparent text-[10px] text-zinc-500 font-bold uppercase tracking-wider focus:outline-none cursor-pointer hover:text-white transition-colors appearance-none"
+                    aria-label="Move to folder"
+                  >
+                    <option value="" className="bg-[#0D1B2B] text-white">Unfiled</option>
+                    {folders.map(f => (
+                      <option key={f.id} value={f.id} className="bg-[#0D1B2B] text-white">{f.name}</option>
+                    ))}
+                  </select>
+                </span>
+              ) : (
+                <span className="truncate">{typeLabel}</span>
+              )}
               {dateLabel && <><span className="text-zinc-700">·</span><span className="text-zinc-500 normal-case tracking-normal font-bold shrink-0">{dateLabel}</span></>}
             </span>
             {isBookmark ? (
@@ -178,6 +227,21 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
               {status.spin && <i className="fa-solid fa-spinner fa-spin text-[10px]"></i>}
               {status.label}
             </div>
+          ) : isBookmark && onChangeFolder ? (
+            <span className="flex items-center gap-2 w-[120px] overflow-hidden" onClick={stop}>
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${currentFolderId ? 'bg-[#A8CF38]' : 'bg-zinc-600'}`}></span>
+              <select
+                value={currentFolderId}
+                onChange={(e) => onChangeFolder(item.id, e.target.value)}
+                className="w-full min-w-0 bg-transparent text-[10px] text-zinc-500 font-bold uppercase tracking-wider focus:outline-none cursor-pointer hover:text-white transition-colors appearance-none"
+                aria-label="Move to folder"
+              >
+                <option value="" className="bg-[#0D1B2B] text-white">Unfiled</option>
+                {folders.map(f => (
+                  <option key={f.id} value={f.id} className="bg-[#0D1B2B] text-white">{f.name}</option>
+                ))}
+              </select>
+            </span>
           ) : (
             <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600">{typeLabel}</span>
           )}

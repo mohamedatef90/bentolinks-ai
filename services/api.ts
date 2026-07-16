@@ -167,6 +167,11 @@ export const api = {
       if (error) throw new Error(`Delete failed: ${error.message}`);
     },
 
+    /** Re-enqueue the parse pipeline for an item whose fetch failed or missed data. */
+    async retry(id: string): Promise<void> {
+      await invokeFn('save-item', { retry_item_id: id });
+    },
+
     async deleteAll() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not signed in');

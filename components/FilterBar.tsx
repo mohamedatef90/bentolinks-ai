@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FilterState, SourceType } from '../types';
 
 interface FilterBarProps {
@@ -10,22 +10,94 @@ interface FilterBarProps {
 }
 
 const SOURCE_TYPES: SourceType[] = ['article', 'youtube', 'reel', 'tweet', 'pdf', 'rss', 'reddit', 'podcast', 'other'];
-const READ_STATUSES: FilterState['read_status'] = ['unread', 'reading', 'read'];
+const READ_STATUSES: NonNullable<FilterState['read_status']> = ['unread', 'reading', 'read'];
 const SORTS: { value: NonNullable<FilterState['sort']>; label: string }[] = [
   { value: 'date_desc', label: 'Newest' },
   { value: 'date_asc', label: 'Oldest' },
   { value: 'title_asc', label: 'Title A-Z' },
 ];
 
-const chipClass = (active: boolean) =>
-  `px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-    active ? 'bg-neon-accent text-black' : 'bg-white/5 text-zinc-500 hover:text-white hover:bg-white/10'
-  }`;
-
 function toggleInArray<T>(arr: T[] | undefined, value: T): T[] | undefined {
   const next = arr?.includes(value) ? arr.filter(v => v !== value) : [...(arr ?? []), value];
   return next.length ? next : undefined;
 }
+
+/** Multi-select dropdown: button with active count, checkbox-style option panel. */
+const MultiDropdown: React.FC<{
+  label: string;
+  icon: string;
+  options: string[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  extra?: React.ReactNode; // e.g. the Starred toggle appended to the Status panel
+  extraActive?: boolean;
+}> = ({ label, icon, options, selected, onToggle, extra, extraActive }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const activeCount = selected.length + (extraActive ? 1 : 0);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={`flex items-center gap-2 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border ${
+          activeCount > 0
+            ? 'bg-neon-accent/10 border-neon-accent/40 text-neon-accent'
+            : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white hover:bg-white/10'
+        }`}
+      >
+        <i className={`fa-solid ${icon} text-[10px]`}></i>
+        {label}
+        {activeCount > 0 && (
+          <span className="min-w-[16px] h-4 px-1 rounded-full bg-neon-accent text-black grid place-items-center text-[9px] font-black">{activeCount}</span>
+        )}
+        <i className={`fa-solid fa-chevron-down text-[8px] transition-transform ${open ? 'rotate-180' : ''}`}></i>
+      </button>
+
+      {open && (
+        <div role="listbox" className="absolute left-0 top-full mt-2 z-30 min-w-[190px] bg-[#0D1B2B] border border-white/10 rounded-2xl p-1.5 shadow-2xl animate-in fade-in slide-in-from-top-1 duration-150">
+          {options.map(opt => {
+            const active = selected.includes(opt);
+            return (
+              <button
+                key={opt}
+                role="option"
+                aria-selected={active}
+                onClick={() => onToggle(opt)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[11px] font-bold capitalize transition-colors text-left ${
+                  active ? 'text-neon-accent bg-neon-accent/[0.07]' : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span className={`w-4 h-4 rounded-md border grid place-items-center shrink-0 ${active ? 'bg-neon-accent border-neon-accent' : 'border-zinc-600'}`}>
+                  {active && <i className="fa-solid fa-check text-[8px] text-black"></i>}
+                </span>
+                {opt}
+              </button>
+            );
+          })}
+          {extra}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const FilterBar: React.FC<FilterBarProps> = ({ filter, onChange, availableTags, availableTopics, onSaveAsSmartCollection }) => {
   const [savingName, setSavingName] = useState<string | null>(null);
@@ -42,34 +114,53 @@ const FilterBar: React.FC<FilterBarProps> = ({ filter, onChange, availableTags, 
     setSavingName(null);
   };
 
+  const selectClass =
+    'bg-white/5 border border-white/5 rounded-full px-4 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 focus:outline-none cursor-pointer';
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        {SOURCE_TYPES.map(type => (
-          <button key={type} onClick={() => onChange({ ...filter, source_type: toggleInArray(filter.source_type, type) })}
-            className={chipClass(!!filter.source_type?.includes(type))}>
-            {type}
-          </button>
-        ))}
-      </div>
+        <MultiDropdown
+          label="Type"
+          icon="fa-shapes"
+          options={SOURCE_TYPES}
+          selected={filter.source_type ?? []}
+          onToggle={(type) => onChange({ ...filter, source_type: toggleInArray(filter.source_type, type as SourceType) })}
+        />
 
-      <div className="flex flex-wrap items-center gap-3">
-        {READ_STATUSES!.map(status => (
-          <button key={status} onClick={() => onChange({ ...filter, read_status: toggleInArray(filter.read_status, status) })}
-            className={chipClass(!!filter.read_status?.includes(status))}>
-            {status}
-          </button>
-        ))}
-        <button onClick={() => onChange({ ...filter, is_starred: !filter.is_starred || undefined })}
-          className={chipClass(!!filter.is_starred)}>
-          <i className="fa-solid fa-star mr-1.5 text-[10px]"></i>Starred
-        </button>
+        <MultiDropdown
+          label="Status"
+          icon="fa-circle-half-stroke"
+          options={READ_STATUSES}
+          selected={filter.read_status ?? []}
+          onToggle={(status) => onChange({ ...filter, read_status: toggleInArray(filter.read_status, status as 'unread' | 'reading' | 'read') })}
+          extraActive={!!filter.is_starred}
+          extra={
+            <>
+              <div className="h-px bg-white/[0.06] mx-2 my-1"></div>
+              <button
+                role="option"
+                aria-selected={!!filter.is_starred}
+                onClick={() => onChange({ ...filter, is_starred: !filter.is_starred || undefined })}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[11px] font-bold transition-colors text-left ${
+                  filter.is_starred ? 'text-neon-accent bg-neon-accent/[0.07]' : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span className={`w-4 h-4 rounded-md border grid place-items-center shrink-0 ${filter.is_starred ? 'bg-neon-accent border-neon-accent' : 'border-zinc-600'}`}>
+                  {filter.is_starred && <i className="fa-solid fa-check text-[8px] text-black"></i>}
+                </span>
+                <i className="fa-solid fa-star text-[10px]"></i>Starred only
+              </button>
+            </>
+          }
+        />
 
         {availableTopics.length > 0 && (
           <select
             value={filter.topic || ''}
             onChange={(e) => onChange({ ...filter, topic: e.target.value || undefined })}
-            className="bg-white/5 border border-white/5 rounded-full px-4 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 focus:outline-none cursor-pointer"
+            className={selectClass}
+            aria-label="Filter by topic"
           >
             <option value="">All topics</option>
             {availableTopics.map(t => <option key={t} value={t}>{t}</option>)}
@@ -80,7 +171,8 @@ const FilterBar: React.FC<FilterBarProps> = ({ filter, onChange, availableTags, 
           <select
             value={filter.sort || 'date_desc'}
             onChange={(e) => onChange({ ...filter, sort: e.target.value as FilterState['sort'] })}
-            className="bg-white/5 border border-white/5 rounded-full px-4 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 focus:outline-none cursor-pointer"
+            className={selectClass}
+            aria-label="Sort order"
           >
             {SORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
@@ -111,6 +203,7 @@ const FilterBar: React.FC<FilterBarProps> = ({ filter, onChange, availableTags, 
         </div>
       </div>
 
+      {/* Tags stay as inline chips (fast multi-toggle, good scannability) */}
       {availableTags.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {availableTags.slice(0, 24).map(tag => (

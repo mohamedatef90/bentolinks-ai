@@ -11,6 +11,7 @@ interface SaveRequest {
   folder_id?: string;
   tags?: string[];
   saved_via?: (typeof SAVED_VIA)[number]; // client origin; defaults to 'web'
+  retry_item_id?: string; // re-enqueue the parse pipeline for an existing item
 }
 
 Deno.serve(async (req: Request) => {
@@ -25,6 +26,27 @@ Deno.serve(async (req: Request) => {
     body = await req.json();
   } catch {
     return corsResponse({ error: 'INVALID_REQUEST', message: 'Body must be JSON' }, 400);
+  }
+
+  // Retry mode: re-run the parse pipeline for an item the user already owns
+  // (used by the card "re-fetch" button when the AI couldn't extract data).
+  if (body.retry_item_id) {
+    const db = serviceClient();
+    const { data: item } = await db
+      .from('content_items')
+      .select('id')
+      .eq('id', body.retry_item_id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (!item) return corsResponse({ error: 'NOT_FOUND', message: 'Item not found' }, 404);
+
+    await db.from('content_items').update({ status: 'pending' }).eq('id', item.id);
+    try {
+      await enqueue(db, { user_id: user.id, item_id: item.id, job_type: 'parse' });
+    } catch (e) {
+      return corsResponse({ error: 'INTERNAL_ERROR', message: (e as Error).message }, 500);
+    }
+    return corsResponse({ id: item.id, status: 'pending', retried: true }, 202);
   }
 
   const urls = body.urls ?? (body.url ? [body.url] : []);

@@ -148,6 +148,32 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
     }
   };
 
+  /** Folders act as categories; bookmark cards move between them via dropdown. */
+  const handleChangeFolder = async (itemId: string, folderId: string) => {
+    const item = items.find(i => i.id === itemId);
+    if (!item) return;
+    const prevFolders = item.item_folders;
+    setItems(prev => prev.map(i => i.id === itemId
+      ? { ...i, item_folders: folderId ? [{ folder_id: folderId }] : [] }
+      : i));
+    try {
+      await api.items.setFolder(itemId, folderId || null);
+    } catch (e: any) {
+      alert(e.message);
+      setItems(prev => prev.map(i => i.id === itemId ? { ...i, item_folders: prevFolders } : i));
+    }
+  };
+
+  /** Re-run the parse pipeline for an item whose fetch failed or missed data. */
+  const handleRetry = async (id: string) => {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, status: 'pending' as const } : i));
+    try {
+      await api.items.retry(id);
+    } catch (e: any) {
+      alert(`Re-fetch failed: ${e.message}`);
+    }
+  };
+
   const handleSaveAsSmartCollection = async (name: string) => {
     try {
       await api.smartCollections.create(name, filter);
@@ -272,7 +298,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
       ) : (
         <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8' : 'space-y-3'}>
           {items.map(item => (
-            <ItemCard key={item.id} item={item} viewMode={viewMode} onToggleStar={handleToggleStar} onCycleReadStatus={handleCycleReadStatus} />
+            <ItemCard key={item.id} item={item} viewMode={viewMode} onToggleStar={handleToggleStar} onCycleReadStatus={handleCycleReadStatus} onRetry={handleRetry} folders={folders} onChangeFolder={handleChangeFolder} />
           ))}
         </div>
       )}

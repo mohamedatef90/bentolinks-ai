@@ -14,7 +14,15 @@ interface LinkCardProps {
   onCycleReadStatus?: (id: string) => void;
   onChangeCategory?: (linkId: string, categoryId: string) => void;
   onUpdateLink?: (linkId: string, updates: Partial<Link>) => void;
+  /** Re-enqueue the parse pipeline (for items where the AI fetch failed/missed data). */
+  onRetry?: (id: string) => void;
 }
+
+/** Entry date as "12 Jun 2026". */
+const formatDate = (ms: number): string | null => {
+  if (!ms || isNaN(ms)) return null;
+  return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+};
 
 const READ_META: Record<'unread' | 'reading' | 'read', { icon: string; label: string }> = {
   unread: { icon: 'fa-regular fa-circle', label: 'Unread' },
@@ -40,6 +48,7 @@ const LinkCard: React.FC<LinkCardProps> = ({
   onToggleStar,
   onCycleReadStatus,
   onChangeCategory,
+  onRetry,
 }) => {
   const navigate = useNavigate();
   const domain = new URL(link.url).hostname;
@@ -48,6 +57,8 @@ const LinkCard: React.FC<LinkCardProps> = ({
   const isProcessing = !!status?.spin;
   const readMeta = READ_META[link.readStatus ?? 'unread'];
   const isBookmark = link.kind === 'bookmark';
+  const dateLabel = formatDate(link.createdAt);
+  const fromMobile = link.savedVia === 'mobile';
 
   // Top-right type marker: book for readable content, bookmark for a plain link.
   const typeBadge = isBookmark
@@ -95,20 +106,43 @@ const LinkCard: React.FC<LinkCardProps> = ({
             </h3>
             <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-extrabold block truncate">
               {domain}
+              {dateLabel && <span className="normal-case tracking-normal text-zinc-600 font-bold"> · {dateLabel}</span>}
             </span>
           </div>
         </div>
         <div className="relative shrink-0 flex items-center justify-end min-w-[84px] self-start">
-          {/* Default: persistent type marker (book = content, bookmark = link). */}
-          <span
-            aria-label={typeBadge.label}
-            title={typeBadge.label}
-            className={`w-9 h-9 rounded-xl border grid place-items-center transition-opacity duration-200 group-hover:opacity-0 ${typeBadge.cls}`}
-          >
-            <i className={`fa-solid ${typeBadge.icon} text-xs`}></i>
-          </span>
-          {/* Hover: pin + delete controls cross-fade in over the badge. */}
+          {/* Default: persistent type marker (book = content, bookmark = link) + mobile origin. */}
+          <div className="flex items-center gap-1.5 transition-opacity duration-200 group-hover:opacity-0">
+            {fromMobile && (
+              <span
+                aria-label="Saved from your phone"
+                title="Saved from your phone (Linkat)"
+                className="w-9 h-9 rounded-xl border grid place-items-center text-sky-300 bg-sky-400/10 border-sky-400/30"
+              >
+                <i className="fa-solid fa-mobile-screen text-xs"></i>
+              </span>
+            )}
+            <span
+              aria-label={typeBadge.label}
+              title={typeBadge.label}
+              className={`w-9 h-9 rounded-xl border grid place-items-center ${typeBadge.cls}`}
+            >
+              <i className={`fa-solid ${typeBadge.icon} text-xs`}></i>
+            </span>
+          </div>
+          {/* Hover: refresh + pin + delete controls cross-fade in over the badges. */}
           <div className="hover-reveal absolute right-0 top-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {onRetry && (
+              <button
+                onClick={(e) => { stop(e); if (!isProcessing) onRetry(link.id); }}
+                disabled={isProcessing}
+                className={`w-10 h-10 flex items-center justify-center transition-all rounded-full hover:bg-white/5 ${isProcessing ? 'text-zinc-700 cursor-default' : 'text-zinc-600 hover:text-[#A8CF38]'}`}
+                title="Re-fetch data (re-runs the AI pipeline for this link)"
+                aria-label="Re-fetch data"
+              >
+                <i className={`fa-solid fa-rotate text-xs ${isProcessing ? 'fa-spin' : ''}`}></i>
+              </button>
+            )}
             <button
               onClick={(e) => { stop(e); onTogglePin?.(link.id); }}
               className={`w-10 h-10 flex items-center justify-center transition-all rounded-full hover:bg-white/5 ${link.isPinned ? 'text-[#A8CF38]' : 'text-zinc-600 hover:text-white'}`}

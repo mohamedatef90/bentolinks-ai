@@ -89,6 +89,20 @@ const App: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [draggedPinnedId, setDraggedPinnedId] = useState<string | null>(null);
+  // User-arranged order of Priority Vault pins (ids) — persisted per device.
+  const [pinnedOrder, setPinnedOrder] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('pinned-order') || '[]'); } catch { return []; }
+  });
+  // User-arranged order of the home briefing sections — persisted per device.
+  const HOME_SECTIONS_DEFAULT = ['phone', 'continue', 'picks', 'fresh', 'bookmarked'] as const;
+  const [homeSectionOrder, setHomeSectionOrder] = useState<string[]>(() => {
+    try {
+      const saved: string[] = JSON.parse(localStorage.getItem('home-section-order') || '[]');
+      // Keep only known keys, append any new sections added since the save.
+      const valid = saved.filter(k => (HOME_SECTIONS_DEFAULT as readonly string[]).includes(k));
+      return [...valid, ...HOME_SECTIONS_DEFAULT.filter(k => !valid.includes(k))];
+    } catch { return [...HOME_SECTIONS_DEFAULT]; }
+  });
   const [currentTime, setCurrentTime] = useState(new Date());
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
@@ -395,17 +409,43 @@ const App: React.FC = () => {
   };
 
   const handlePinnedDrop = (targetId: string) => {
-    if (!draggedPinnedId || draggedPinnedId === targetId) return;
-    setLinks(prev => {
-      const newLinks = [...prev];
-      const draggedIdx = newLinks.findIndex(l => l.id === draggedPinnedId);
-      const targetIdx = newLinks.findIndex(l => l.id === targetId);
-      if (draggedIdx === -1 || targetIdx === -1) return prev;
-      const [removed] = newLinks.splice(draggedIdx, 1);
-      newLinks.splice(targetIdx, 0, removed);
-      return newLinks;
-    });
+    if (!draggedPinnedId || draggedPinnedId === targetId) { setDraggedPinnedId(null); return; }
+    // Reorder within the pinned set only, and persist so it survives reloads.
+    const currentIds = pinnedLinks.map(l => l.id);
+    const from = currentIds.indexOf(draggedPinnedId);
+    const to = currentIds.indexOf(targetId);
+    if (from === -1 || to === -1) { setDraggedPinnedId(null); return; }
+    const next = [...currentIds];
+    next.splice(from, 1);
+    next.splice(to, 0, draggedPinnedId);
+    setPinnedOrder(next);
+    localStorage.setItem('pinned-order', JSON.stringify(next));
     setDraggedPinnedId(null);
+  };
+
+  /** Re-run the parse pipeline for a card whose fetch failed or missed data. */
+  const handleRetryLink = async (id: string) => {
+    setLinks(prev => prev.map(l => l.id === id ? { ...l, status: 'pending' } : l));
+    try {
+      await api.items.retry(id);
+      // Realtime subscription streams pending -> parsing -> enriching -> ready from here.
+    } catch (e: any) {
+      alert(`Re-fetch failed: ${e.message}`);
+      fetchVaultData();
+    }
+  };
+
+  /** Nudge a home briefing section up or down; persisted per device. */
+  const moveHomeSection = (key: string, dir: -1 | 1) => {
+    setHomeSectionOrder(prev => {
+      const idx = prev.indexOf(key);
+      const swap = idx + dir;
+      if (idx === -1 || swap < 0 || swap >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[swap]] = [next[swap], next[idx]];
+      localStorage.setItem('home-section-order', JSON.stringify(next));
+      return next;
+    });
   };
 
   // Vault Hub is the home for BOOKMARKS — plain website links you saved to
@@ -432,7 +472,13 @@ const App: React.FC = () => {
     [smartCollections]
   );
 
-  const pinnedLinks = useMemo<Link[]>(() => vaultLinks.filter(l => l.isPinned), [vaultLinks]);
+  const pinnedLinks = useMemo<Link[]>(() => {
+    const pinned = vaultLinks.filter(l => l.isPinned);
+    if (!pinnedOrder.length) return pinned;
+    // User-arranged order first; anything pinned since the last arrange goes to the end.
+    const rank = new Map(pinnedOrder.map((id, i) => [id, i]));
+    return [...pinned].sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
+  }, [vaultLinks, pinnedOrder]);
 
   const processingLinks = useMemo<Link[]>(
     () => links.filter(l => l.status === 'pending' || l.status === 'parsing' || l.status === 'enriching'),
@@ -807,48 +853,6 @@ const App: React.FC = () => {
               </Reveal>
             </div>
 
-            {/* From your phone — items saved via the Linkat mobile app */}
-            {phoneLinks.length > 0 && (
-              <Reveal>
-                <section className="space-y-6">
-                  <div className="flex items-center gap-4">
-                    <span className="eyebrow">From your phone</span>
-                    <div className="h-px flex-grow bg-white/5"></div>
-                    {mobileCollectionId && (
-                      <NavLink to={`/collection/${mobileCollectionId}`} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
-                        View all <i className="fa-solid fa-arrow-right ml-1"></i>
-                      </NavLink>
-                    )}
-                  </div>
-                  <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
-                    {phoneLinks.map(link => (
-                      <a
-                        key={`phone-${link.id}`}
-                        href={link.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="bento-card spot shrink-0 w-64 p-5 hover:border-white/10 transition-all group/phone"
-                        onMouseMove={spotlight}
-                      >
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="w-9 h-9 rounded-xl bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
-                            <img
-                              src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
-                              alt=""
-                              className="w-5 h-5 object-contain"
-                              onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=0D1B2B&color=fff`)}
-                            />
-                          </div>
-                          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 font-mono-data">{timeAgo(link.createdAt)} ago</span>
-                        </div>
-                        <p className="text-xs font-bold text-zinc-300 leading-snug line-clamp-2 group-hover/phone:text-white transition-colors">{link.title}</p>
-                      </a>
-                    ))}
-                  </div>
-                </section>
-              </Reveal>
-            )}
-
             {isVaultLoading ? (
               /* Skeletons — never claim "empty" while the vault is still loading */
               <div className="space-y-10">
@@ -870,7 +874,7 @@ const App: React.FC = () => {
                 {searchMatches.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
                     {searchMatches.map(link => (
-                      <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
+                      <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} onRetry={handleRetryLink} />
                     ))}
                   </div>
                 ) : (
@@ -890,104 +894,170 @@ const App: React.FC = () => {
                 </div>
               </div>
             ) : (
-              /* The daily briefing: capped sections, each with a path into the Library */
+              /* The daily briefing: capped sections, user-reorderable (chevrons persist to localStorage) */
               <div className="space-y-14">
-                {continueReading.length > 0 && (
-                  <Reveal>
-                    <section className="space-y-6">
-                      <div className="flex items-center gap-4">
-                        <span className="eyebrow">Continue reading</span>
-                        <div className="h-px flex-grow bg-white/5"></div>
-                        {queueCollectionId && (
-                          <NavLink to={`/collection/${queueCollectionId}`} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
-                            Reading queue <i className="fa-solid fa-arrow-right ml-1"></i>
-                          </NavLink>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                        {continueReading.map(link => (
-                          <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
-                        ))}
-                      </div>
-                    </section>
-                  </Reveal>
-                )}
+                {homeSectionOrder.map(sectionKey => {
+                  // Hover-revealed up/down nudge controls shared by every section header.
+                  const reorderControls = (
+                    <span className="hover-reveal flex items-center gap-0.5 opacity-0 group-hover/sec:opacity-100 transition-opacity shrink-0">
+                      <button onClick={() => moveHomeSection(sectionKey, -1)} className="w-7 h-7 grid place-items-center rounded-full text-zinc-600 hover:text-white hover:bg-white/5 transition-all" title="Move section up" aria-label="Move section up">
+                        <i className="fa-solid fa-chevron-up text-[9px]"></i>
+                      </button>
+                      <button onClick={() => moveHomeSection(sectionKey, 1)} className="w-7 h-7 grid place-items-center rounded-full text-zinc-600 hover:text-white hover:bg-white/5 transition-all" title="Move section down" aria-label="Move section down">
+                        <i className="fa-solid fa-chevron-down text-[9px]"></i>
+                      </button>
+                    </span>
+                  );
 
-                {dailyPicks.length > 0 && (
-                  <Reveal>
-                    <section className="space-y-6">
-                      <div className="flex items-center gap-4">
-                        <span className="eyebrow">Today's picks — worth a re-read</span>
-                        <div className="h-px flex-grow bg-white/5"></div>
-                        {resurfaceCollectionId && (
-                          <NavLink to={`/collection/${resurfaceCollectionId}`} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
-                            View all <i className="fa-solid fa-arrow-right ml-1"></i>
-                          </NavLink>
-                        )}
-                      </div>
-                      <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
-                        {dailyPicks.slice(0, 5).map(link => (
-                          <NavLink
-                            key={`pick-${link.id}`}
-                            to={`/item/${link.id}`}
-                            className="bento-card spot shrink-0 w-72 p-5 hover:border-white/10 transition-all group/pick"
-                            onMouseMove={spotlight}
-                          >
-                            <div className="flex items-center gap-3 mb-3">
-                              <div className="w-9 h-9 rounded-xl bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
-                                <img
-                                  src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
-                                  alt=""
-                                  className="w-5 h-5 object-contain"
-                                  onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=0D1B2B&color=fff`)}
-                                />
-                              </div>
-                              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 font-mono-data">{timeAgo(link.createdAt)} old</span>
-                            </div>
-                            <p className="text-xs font-bold text-zinc-300 leading-snug line-clamp-2 group-hover/pick:text-white transition-colors">{link.title}</p>
-                          </NavLink>
-                        ))}
-                      </div>
-                    </section>
-                  </Reveal>
-                )}
+                  switch (sectionKey) {
+                    case 'phone': return phoneLinks.length > 0 && (
+                      <Reveal key="sec-phone">
+                        <section className="space-y-6 group/sec">
+                          <div className="flex items-center gap-4">
+                            <span className="eyebrow">From your phone</span>
+                            {reorderControls}
+                            <div className="h-px flex-grow bg-white/5"></div>
+                            {mobileCollectionId && (
+                              <NavLink to={`/collection/${mobileCollectionId}`} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                                View all <i className="fa-solid fa-arrow-right ml-1"></i>
+                              </NavLink>
+                            )}
+                          </div>
+                          <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+                            {phoneLinks.map(link => (
+                              <a
+                                key={`phone-${link.id}`}
+                                href={link.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="bento-card spot shrink-0 w-64 p-5 hover:border-white/10 transition-all group/phone"
+                                onMouseMove={spotlight}
+                              >
+                                <div className="flex items-center gap-3 mb-3">
+                                  <div className="w-9 h-9 rounded-xl bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                                    <img
+                                      src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
+                                      alt=""
+                                      className="w-5 h-5 object-contain"
+                                      onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=0D1B2B&color=fff`)}
+                                    />
+                                  </div>
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 font-mono-data">{timeAgo(link.createdAt)} ago</span>
+                                </div>
+                                <p className="text-xs font-bold text-zinc-300 leading-snug line-clamp-2 group-hover/phone:text-white transition-colors">{link.title}</p>
+                              </a>
+                            ))}
+                          </div>
+                        </section>
+                      </Reveal>
+                    );
 
-                {latestContent.length > 0 && (
-                  <Reveal>
-                    <section className="space-y-6">
-                      <div className="flex items-center gap-4">
-                        <span className="eyebrow">Fresh in your Library</span>
-                        <div className="h-px flex-grow bg-white/5"></div>
-                        <NavLink to="/library" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
-                          Open Library {stats.library.toLocaleString()} <i className="fa-solid fa-arrow-right ml-1"></i>
-                        </NavLink>
-                      </div>
-                      <p className="-mt-3 text-[11px] font-bold text-zinc-600 max-w-xl">Articles, videos and social posts — the readable stuff, summarized and searchable.</p>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                        {latestContent.map(link => (
-                          <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
-                        ))}
-                      </div>
-                    </section>
-                  </Reveal>
-                )}
+                    case 'continue': return continueReading.length > 0 && (
+                      <Reveal key="sec-continue">
+                        <section className="space-y-6 group/sec">
+                          <div className="flex items-center gap-4">
+                            <span className="eyebrow">Continue reading</span>
+                            {reorderControls}
+                            <div className="h-px flex-grow bg-white/5"></div>
+                            {queueCollectionId && (
+                              <NavLink to={`/collection/${queueCollectionId}`} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                                Reading queue <i className="fa-solid fa-arrow-right ml-1"></i>
+                              </NavLink>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                            {continueReading.map(link => (
+                              <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} onRetry={handleRetryLink} />
+                            ))}
+                          </div>
+                        </section>
+                      </Reveal>
+                    );
 
-                <Reveal>
-                  <section className="space-y-6">
-                    <div className="flex items-center gap-4">
-                      <span className="eyebrow">Recently bookmarked</span>
-                      <div className="h-px flex-grow bg-white/5"></div>
-                      <NavLink to="/library?kind=bookmark" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
-                        View all {vaultLinks.length.toLocaleString()} <i className="fa-solid fa-arrow-right ml-1"></i>
-                      </NavLink>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
-                      {recentlySaved.map(link => (
-                        <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} />
-                      ))}
-                    </div>
-                  </section>
-                </Reveal>
+                    case 'picks': return dailyPicks.length > 0 && (
+                      <Reveal key="sec-picks">
+                        <section className="space-y-6 group/sec">
+                          <div className="flex items-center gap-4">
+                            <span className="eyebrow">Today's picks — worth a re-read</span>
+                            {reorderControls}
+                            <div className="h-px flex-grow bg-white/5"></div>
+                            {resurfaceCollectionId && (
+                              <NavLink to={`/collection/${resurfaceCollectionId}`} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                                View all <i className="fa-solid fa-arrow-right ml-1"></i>
+                              </NavLink>
+                            )}
+                          </div>
+                          <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+                            {dailyPicks.slice(0, 5).map(link => (
+                              <NavLink
+                                key={`pick-${link.id}`}
+                                to={`/item/${link.id}`}
+                                className="bento-card spot shrink-0 w-72 p-5 hover:border-white/10 transition-all group/pick"
+                                onMouseMove={spotlight}
+                              >
+                                <div className="flex items-center gap-3 mb-3">
+                                  <div className="w-9 h-9 rounded-xl bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                                    <img
+                                      src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
+                                      alt=""
+                                      className="w-5 h-5 object-contain"
+                                      onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=0D1B2B&color=fff`)}
+                                    />
+                                  </div>
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 font-mono-data">{timeAgo(link.createdAt)} old</span>
+                                </div>
+                                <p className="text-xs font-bold text-zinc-300 leading-snug line-clamp-2 group-hover/pick:text-white transition-colors">{link.title}</p>
+                              </NavLink>
+                            ))}
+                          </div>
+                        </section>
+                      </Reveal>
+                    );
+
+                    case 'fresh': return latestContent.length > 0 && (
+                      <Reveal key="sec-fresh">
+                        <section className="space-y-6 group/sec">
+                          <div className="flex items-center gap-4">
+                            <span className="eyebrow">Fresh in your Library</span>
+                            {reorderControls}
+                            <div className="h-px flex-grow bg-white/5"></div>
+                            <NavLink to="/library" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                              Open Library {stats.library.toLocaleString()} <i className="fa-solid fa-arrow-right ml-1"></i>
+                            </NavLink>
+                          </div>
+                          <p className="-mt-3 text-[11px] font-bold text-zinc-600 max-w-xl">Articles, videos and social posts — the readable stuff, summarized and searchable.</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                            {latestContent.map(link => (
+                              <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} onRetry={handleRetryLink} />
+                            ))}
+                          </div>
+                        </section>
+                      </Reveal>
+                    );
+
+                    case 'bookmarked': return (
+                      <Reveal key="sec-bookmarked">
+                        <section className="space-y-6 group/sec">
+                          <div className="flex items-center gap-4">
+                            <span className="eyebrow">Recently bookmarked</span>
+                            {reorderControls}
+                            <div className="h-px flex-grow bg-white/5"></div>
+                            <NavLink to="/library?kind=bookmark" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                              View all {vaultLinks.length.toLocaleString()} <i className="fa-solid fa-arrow-right ml-1"></i>
+                            </NavLink>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
+                            {recentlySaved.map(link => (
+                              <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} onRetry={handleRetryLink} />
+                            ))}
+                          </div>
+                        </section>
+                      </Reveal>
+                    );
+
+                    default: return null;
+                  }
+                })}
               </div>
             )}
           </>
