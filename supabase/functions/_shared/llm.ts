@@ -1,11 +1,13 @@
 // Pluggable LLM provider for the enrichment step (summary / key points / tags / topic).
-// Selected by the Vault secret LLM_PROVIDER (gemini | claude | openai); defaults to
-// 'gemini' so nothing breaks if it's unset. Embeddings and TTS remain Gemini-only
-// (Claude has neither; keeping one embedding model avoids re-embedding the corpus).
+// Selected by the Vault secret LLM_PROVIDER (gemini | claude | openai | nvidia);
+// defaults to 'gemini' so nothing breaks if it's unset. Embeddings and TTS remain
+// Gemini-only (keeping one embedding model avoids re-embedding the corpus).
+// Production runs 'nvidia' (z-ai/glm-5.2 on integrate.api.nvidia.com) with
+// automatic fallback to Gemini so items never stall on a provider outage.
 
 import { enrichContent as enrichGemini, EnrichmentResult } from './gemini.ts';
 
-export type LlmProvider = 'gemini' | 'claude' | 'openai';
+export type LlmProvider = 'gemini' | 'claude' | 'openai' | 'nvidia';
 
 export interface EnrichInput {
   title: string | null;
@@ -19,7 +21,12 @@ export interface ProviderConfig {
   geminiKey: string | null;
   anthropicKey: string | null;
   openaiKey: string | null;
+  nvidiaKey: string | null;
+  /** Model override (Vault LLM_MODEL); currently used by the nvidia provider. */
+  model: string | null;
 }
+
+const NVIDIA_DEFAULT_MODEL = 'z-ai/glm-5.2';
 
 const TOPIC_ENUM = ['AI', 'Design', 'Development', 'Productivity', 'News', 'Lifestyle', 'Science', 'Business', 'Other'];
 const LABEL_ENUM = ['Tutorial', 'News Article', 'Research Paper', 'Tool Review', 'Opinion', 'Case Study', 'Video Essay', 'Social Post', 'Documentation', 'Other'];
@@ -98,6 +105,55 @@ async function enrichClaude(apiKey: string, input: EnrichInput): Promise<Enrichm
   return normalize(block.input as Partial<EnrichmentResult>);
 }
 
+// NVIDIA (integrate.api.nvidia.com, OpenAI-compatible) — z-ai/glm-5.2 by default.
+// Tries strict json_schema first; NIM structured-output support varies per model,
+// so a 4xx retries once with json_object + the schema embedded in the prompt.
+async function enrichNvidia(apiKey: string, model: string | null, input: EnrichInput): Promise<EnrichmentResult> {
+  const call = async (responseFormat: Record<string, unknown>, schemaInPrompt: boolean) => {
+    const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: model || NVIDIA_DEFAULT_MODEL,
+        temperature: 0.2,
+        max_tokens: 2048,
+        messages: [
+          {
+            role: 'system',
+            content: schemaInPrompt
+              ? `You are a knowledge assistant. Respond with ONLY a JSON object matching this JSON Schema, no prose:\n${JSON.stringify(JSON_SCHEMA)}`
+              : 'You are a knowledge assistant. Respond only via the provided schema.',
+          },
+          { role: 'user', content: buildPrompt(input) },
+        ],
+        response_format: responseFormat,
+      }),
+      // NVIDIA's shared endpoint queues big models — observed 1.5-3min latency
+      // for GLM-5.2. 140s is the edge of the worker isolate's wall clock; if the
+      // isolate dies mid-job, reclaim_stuck_jobs re-queues and Gemini fallback
+      // still guarantees the item enriches.
+      signal: AbortSignal.timeout(140_000),
+    });
+    return res;
+  };
+
+  let res = await call(
+    { type: 'json_schema', json_schema: { name: 'enrichment', strict: true, schema: JSON_SCHEMA } },
+    false,
+  );
+  if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 429) {
+    res = await call({ type: 'json_object' }, true);
+  }
+  if (!res.ok) throw new Error(`NVIDIA error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+
+  const json = await res.json();
+  let text: string | undefined = json?.choices?.[0]?.message?.content;
+  if (!text) throw new Error('NVIDIA returned no content');
+  // GLM occasionally wraps JSON in markdown fences despite response_format.
+  text = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  return normalize(JSON.parse(text) as Partial<EnrichmentResult>);
+}
+
 // OpenAI — structured output via response_format json_schema.
 async function enrichOpenAI(apiKey: string, input: EnrichInput): Promise<EnrichmentResult> {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -123,18 +179,33 @@ async function enrichOpenAI(apiKey: string, input: EnrichInput): Promise<Enrichm
   return normalize(JSON.parse(text) as Partial<EnrichmentResult>);
 }
 
+/** EnrichmentResult plus which provider actually produced it (fallbacks included). */
+export type EnrichOutcome = EnrichmentResult & { enriched_by: string };
+
 /** Enrich with the configured provider. Throws a clear error if its key is missing. */
-export async function enrich(cfg: ProviderConfig, input: EnrichInput): Promise<EnrichmentResult> {
+export async function enrich(cfg: ProviderConfig, input: EnrichInput): Promise<EnrichOutcome> {
   switch (cfg.provider) {
+    case 'nvidia': {
+      if (!cfg.nvidiaKey) throw new Error('LLM_PROVIDER=nvidia but NVIDIA_API_KEY missing from Vault');
+      try {
+        const r = await enrichNvidia(cfg.nvidiaKey, cfg.model, input);
+        return { ...r, enriched_by: `nvidia:${cfg.model || NVIDIA_DEFAULT_MODEL}` };
+      } catch (e) {
+        // User-confirmed behavior: never let items stall on a provider outage.
+        if (!cfg.geminiKey) throw e;
+        console.warn(`NVIDIA enrich failed, falling back to Gemini: ${(e as Error).message}`);
+        return { ...(await enrichGemini(cfg.geminiKey, input)), enriched_by: 'gemini:fallback' };
+      }
+    }
     case 'claude':
       if (!cfg.anthropicKey) throw new Error('LLM_PROVIDER=claude but ANTHROPIC_API_KEY missing from Vault');
-      return await enrichClaude(cfg.anthropicKey, input);
+      return { ...(await enrichClaude(cfg.anthropicKey, input)), enriched_by: 'claude' };
     case 'openai':
       if (!cfg.openaiKey) throw new Error('LLM_PROVIDER=openai but OPENAI_API_KEY missing from Vault');
-      return await enrichOpenAI(cfg.openaiKey, input);
+      return { ...(await enrichOpenAI(cfg.openaiKey, input)), enriched_by: 'openai' };
     case 'gemini':
     default:
       if (!cfg.geminiKey) throw new Error('GEMINI_API_KEY missing from Vault');
-      return await enrichGemini(cfg.geminiKey, input);
+      return { ...(await enrichGemini(cfg.geminiKey, input)), enriched_by: 'gemini' };
   }
 }

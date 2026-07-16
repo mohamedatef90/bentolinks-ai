@@ -92,7 +92,7 @@ async function handleParse(db: SupabaseClient, job: Job, geminiKey: string | nul
 async function handleEnrich(db: SupabaseClient, job: Job, llm: ProviderConfig) {
   const { data: item, error } = await db
     .from('content_items')
-    .select('id, user_id, url, title, source_type, content_text, tags')
+    .select('id, user_id, url, title, source_type, content_text, tags, raw_metadata')
     .eq('id', job.item_id!)
     .single();
   if (error || !item) throw new Error(`item ${job.item_id} not found`);
@@ -118,6 +118,9 @@ async function handleEnrich(db: SupabaseClient, job: Job, llm: ProviderConfig) {
     topic: result.topic_category,
     tags: mergedTags,
     language: result.language,
+    // Which provider actually produced this (e.g. 'nvidia:z-ai/glm-5.2' or
+    // 'gemini:fallback') — verifiable via SQL instead of ephemeral logs.
+    raw_metadata: { ...((item.raw_metadata as Record<string, unknown>) ?? {}), enriched_by: result.enriched_by },
     status: 'ready',
   }).eq('id', item.id);
 
@@ -163,11 +166,14 @@ async function processJobs(): Promise<{ processed: number; failed: number }> {
 
   const geminiKey = await getSecret(db, 'GEMINI_API_KEY');
   // Enrichment provider is pluggable (Vault LLM_PROVIDER); embeddings/TTS stay Gemini.
+  // Production: nvidia (z-ai/glm-5.2), with automatic Gemini fallback inside enrich().
   const llm: ProviderConfig = {
     provider: ((await getSecret(db, 'LLM_PROVIDER')) as LlmProvider) || 'gemini',
     geminiKey,
     anthropicKey: await getSecret(db, 'ANTHROPIC_API_KEY'),
     openaiKey: await getSecret(db, 'OPENAI_API_KEY'),
+    nvidiaKey: await getSecret(db, 'NVIDIA_API_KEY'),
+    model: await getSecret(db, 'LLM_MODEL'),
   };
 
   while (Date.now() - started < TIME_BUDGET_MS) {
