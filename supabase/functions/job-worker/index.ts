@@ -61,13 +61,30 @@ async function handleParse(db: SupabaseClient, job: Job, geminiKey: string | nul
   try {
     parsed = await parseBySourceType(db, item, geminiKey);
   } catch (e) {
-    if (item.source_type === 'article' || item.source_type === 'pdf') throw e;
     // Specialized endpoints are brittle — degrade to plain OG metadata.
     console.warn(`${item.source_type} parser failed for ${item.url}, falling back to OG:`, (e as Error).message);
-    parsed = await parseArticle(item.url);
+    try {
+      parsed = await parseArticle(item.url);
+    } catch (e2) {
+      // Page unreachable (bot-blocked, login-walled, dead): keep a metadata
+      // stub so the item still gets an AI title + summary from the URL alone
+      // instead of dying as 'failed' with an empty card.
+      const host = (() => { try { return new URL(item.url).hostname; } catch { return null; } })();
+      console.warn(`OG fallback also failed for ${item.url}:`, (e2 as Error).message);
+      parsed = {
+        title: null,
+        description: null,
+        author: null,
+        site_name: host?.replace(/^www\./, '') ?? null,
+        thumbnail_url: null,
+        favicon_url: host ? `https://www.google.com/s2/favicons?domain=${host}&sz=64` : null,
+        published_at: null,
+        content_text: null,
+        word_count: null,
+        raw_metadata: { parse_error: (e2 as Error).message },
+      };
+    }
   }
-
-  const hasContent = !!parsed.content_text && parsed.content_text.length >= MIN_ENRICH_CHARS;
 
   await db.from('content_items').update({
     title: parsed.title ?? item.title,
@@ -81,38 +98,43 @@ async function handleParse(db: SupabaseClient, job: Job, geminiKey: string | nul
     word_count: parsed.word_count,
     duration_seconds: parsed.duration_seconds ?? null,
     raw_metadata: parsed.raw_metadata ?? null,
-    status: hasContent ? 'enriching' : 'degraded',
+    status: 'enriching',
   }).eq('id', item.id);
 
-  if (hasContent) {
-    await enqueue(db, { user_id: item.user_id, item_id: item.id, job_type: 'enrich' });
-  }
+  // Every item gets enriched — metadata-only bookmarks and un-scrapable social
+  // links included (the LLM writes an AI title + summary from URL/title/snippet).
+  await enqueue(db, { user_id: item.user_id, item_id: item.id, job_type: 'enrich' });
 }
 
 async function handleEnrich(db: SupabaseClient, job: Job, llm: ProviderConfig) {
   const { data: item, error } = await db
     .from('content_items')
-    .select('id, user_id, url, title, source_type, content_text, tags, raw_metadata')
+    .select('id, user_id, url, title, description, source_type, content_text, tags, raw_metadata')
     .eq('id', job.item_id!)
     .single();
   if (error || !item) throw new Error(`item ${job.item_id} not found`);
-  if (!item.content_text || item.content_text.length < MIN_ENRICH_CHARS) {
-    await db.from('content_items').update({ status: 'degraded' }).eq('id', item.id);
-    return;
-  }
+
+  // Thin/metadata-only items enrich from whatever the parser got (description,
+  // scraps of text); llm.ts detects the thin case and describes the destination.
+  const content = item.content_text && item.content_text.length >= MIN_ENRICH_CHARS
+    ? item.content_text
+    : [item.description, item.content_text].filter(Boolean).join('\n\n');
 
   const result = await enrich(llm, {
     title: item.title,
     url: item.url,
     sourceType: item.source_type,
-    content: item.content_text,
+    content,
   });
 
   const userTags: string[] = item.tags ?? [];
   const mergedTags = [...new Set([...userTags, ...result.tags])].slice(0, 10);
 
+  // Keep a real parsed title; replace missing or URL-looking ones with the AI's.
+  const hasRealTitle = !!item.title?.trim() && !/^https?:\/\//i.test(item.title.trim());
+
   await db.from('content_items').update({
-    title: item.title ?? result.suggested_title,
+    title: hasRealTitle ? item.title : (result.suggested_title || item.title),
     summary: result.summary,
     key_points: result.key_points,
     topic: result.topic_category,

@@ -48,6 +48,9 @@ const JSON_SCHEMA = {
 } as const;
 
 function buildPrompt(input: EnrichInput): string {
+  // Metadata-only items (plain bookmarks, un-scrapable social links) still get
+  // enriched: the model describes the destination from URL + title + snippet.
+  const thin = input.content.trim().length < 200;
   return `You are a knowledge assistant. Extract structured information from the given content.
 
 Source type: ${input.sourceType}
@@ -55,13 +58,14 @@ URL: ${input.url}
 Title: ${input.title ?? '(unknown)'}
 
 Content:
-${input.content.slice(0, 32000)}
+${input.content.slice(0, 32000) || '(no content could be extracted)'}
 
 Rules:
 - summary: 2-3 sentences capturing the main point, in the content's own language.
 - key_points: 3-5 short bullet takeaways.
 - tags: 2-5 normalized tags — lowercase, hyphens instead of spaces, max 30 chars each.
-- suggested_title: clean title without site-name suffixes.`;
+- suggested_title: clean title without site-name suffixes.${thin ? `
+- Only minimal metadata is available for this link. Infer from the URL, domain and title what the page or site is and what it offers, and write the summary as a useful description of that destination. Never answer that there is no content.` : ''}`;
 }
 
 /** Shared post-processing so every provider yields identical, normalized output. */

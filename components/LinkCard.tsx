@@ -3,6 +3,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Link, Category, ItemStatus } from '../types';
 import { spotlight } from './magic';
+import HoverPreview from './HoverPreview';
 
 interface LinkCardProps {
   link: Link;
@@ -89,6 +90,11 @@ const LinkCard: React.FC<LinkCardProps> = ({
       className="bento-card spot group relative p-5 transition-all duration-300 hover:border-white/10 flex flex-col h-full shadow-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8CF38]/60"
       onMouseMove={spotlight}
     >
+      <HoverPreview
+        title={link.title}
+        summary={link.summary || link.description}
+        meta={`${domain}${dateLabel ? ` · ${dateLabel}` : ''}`}
+      />
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl flex items-center justify-center overflow-hidden border border-white/5 bg-[#0A1320] shadow-inner group-hover:border-[#A8CF38]/30 transition-colors">
@@ -164,9 +170,21 @@ const LinkCard: React.FC<LinkCardProps> = ({
       </div>
 
       {status && (
-        <div className={`inline-flex items-center gap-2 self-start px-3 py-1 mb-3 rounded-full border text-[10px] font-black uppercase tracking-widest ${status.className}`}>
-          {isProcessing && <i className="fa-solid fa-spinner fa-spin text-[10px]"></i>}
-          {status.label}
+        <div className="flex items-center gap-2 mb-3">
+          <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-widest ${status.className}`}>
+            {isProcessing && <i className="fa-solid fa-spinner fa-spin text-[10px]"></i>}
+            {status.label}
+          </div>
+          {/* AI failed or came back thin — always-visible retry (not hover-only). */}
+          {!isProcessing && onRetry && (
+            <button
+              onClick={(e) => { stop(e); onRetry(link.id); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-[#A8CF38]/30 bg-[#A8CF38]/10 text-[#A8CF38] text-[10px] font-black uppercase tracking-widest hover:bg-[#A8CF38] hover:text-black transition-all"
+              title="Retry: re-fetch the page and re-run the AI"
+            >
+              <i className="fa-solid fa-rotate text-[10px]"></i>Retry AI
+            </button>
+          )}
         </div>
       )}
 

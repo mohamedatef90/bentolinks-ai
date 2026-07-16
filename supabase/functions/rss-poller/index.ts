@@ -23,6 +23,7 @@ const TIME_BUDGET_MS = 100_000;
 const FETCH_TIMEOUT_MS = 20_000;
 const NEW_ITEM_CAP = 10;         // max new items per feed per poll (enrichment throttle)
 const ENTRY_WINDOW = 30;         // newest feed entries considered per poll
+const MAX_ENTRY_AGE_MS = 48 * 3600_000; // only ingest entries published in the last 48h
 const BASE_INTERVAL_MIN = 30;    // healthy feeds are polled every cron tick
 const MAX_ERROR_COUNT = 10;      // deactivate after this many consecutive failures
 
@@ -82,7 +83,16 @@ async function pollSubscription(db: SupabaseClient, sub: Subscription): Promise<
   const feed = parseFeed(await res.text());
 
   // Newest first; unstamped entries keep feed order (feeds are newest-first by convention).
+  // Entries older than 48h are skipped entirely — the feed surface is a "what's
+  // new" stream, not a backfill (undated entries pass; the NEW_ITEM_CAP still
+  // bounds them).
+  const cutoff = Date.now() - MAX_ENTRY_AGE_MS;
   const entries = feed.entries
+    .filter((e) => {
+      if (!e.published_at) return true;
+      const t = Date.parse(e.published_at);
+      return isNaN(t) || t >= cutoff; // unparsable dates pass like undated ones
+    })
     .map((e, i) => ({ ...e, order: i }))
     .sort((a, b) => {
       const ta = a.published_at ? Date.parse(a.published_at) : null;
