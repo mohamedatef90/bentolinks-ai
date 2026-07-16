@@ -196,6 +196,7 @@ async function processJobs(): Promise<{ processed: number; failed: number }> {
     openaiKey: await getSecret(db, 'OPENAI_API_KEY'),
     nvidiaKey: await getSecret(db, 'NVIDIA_API_KEY'),
     model: await getSecret(db, 'LLM_MODEL'),
+    fastModel: await getSecret(db, 'LLM_MODEL_FAST'),
   };
 
   while (Date.now() - started < TIME_BUDGET_MS) {

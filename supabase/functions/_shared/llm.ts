@@ -22,11 +22,27 @@ export interface ProviderConfig {
   anthropicKey: string | null;
   openaiKey: string | null;
   nvidiaKey: string | null;
-  /** Model override (Vault LLM_MODEL); currently used by the nvidia provider. */
+  /** Deep/long-form model (Vault LLM_MODEL) — the nvidia router's heavy tier. */
   model: string | null;
+  /** Fast/cheap model (Vault LLM_MODEL_FAST) — the nvidia router's light tier. */
+  fastModel: string | null;
 }
 
-const NVIDIA_DEFAULT_MODEL = 'z-ai/glm-5.2';
+// Two-tier NVIDIA router. Most saves are thin (bookmarks, social posts, short
+// pages): a small model answers those in seconds, while GLM-5.2 — which queues
+// 1.5-3min on the shared endpoint — is reserved for long-form content that
+// actually benefits from a frontier reasoner. Both verified live on the account.
+const NVIDIA_DEFAULT_MODEL = 'z-ai/glm-5.2';         // deep tier
+const NVIDIA_FAST_MODEL = 'openai/gpt-oss-20b';      // fast tier (clean JSON, reasoning kept out of content)
+// Content at/above this many characters routes to the deep model; below it, fast.
+const ROUTER_DEEP_CHARS = 2000;
+
+/** Pick the NVIDIA model for this item: fast for thin content, deep for long-form. */
+function routeNvidiaModel(cfg: ProviderConfig, input: EnrichInput): string {
+  const deep = cfg.model || NVIDIA_DEFAULT_MODEL;
+  const fast = cfg.fastModel || NVIDIA_FAST_MODEL;
+  return input.content.trim().length >= ROUTER_DEEP_CHARS ? deep : fast;
+}
 
 const TOPIC_ENUM = ['AI', 'Design', 'Development', 'Productivity', 'News', 'Lifestyle', 'Science', 'Business', 'Other'];
 const LABEL_ENUM = ['Tutorial', 'News Article', 'Research Paper', 'Tool Review', 'Opinion', 'Case Study', 'Video Essay', 'Social Post', 'Documentation', 'Other'];
@@ -191,13 +207,14 @@ export async function enrich(cfg: ProviderConfig, input: EnrichInput): Promise<E
   switch (cfg.provider) {
     case 'nvidia': {
       if (!cfg.nvidiaKey) throw new Error('LLM_PROVIDER=nvidia but NVIDIA_API_KEY missing from Vault');
+      const model = routeNvidiaModel(cfg, input);
       try {
-        const r = await enrichNvidia(cfg.nvidiaKey, cfg.model, input);
-        return { ...r, enriched_by: `nvidia:${cfg.model || NVIDIA_DEFAULT_MODEL}` };
+        const r = await enrichNvidia(cfg.nvidiaKey, model, input);
+        return { ...r, enriched_by: `nvidia:${model}` };
       } catch (e) {
         // User-confirmed behavior: never let items stall on a provider outage.
         if (!cfg.geminiKey) throw e;
-        console.warn(`NVIDIA enrich failed, falling back to Gemini: ${(e as Error).message}`);
+        console.warn(`NVIDIA enrich (${model}) failed, falling back to Gemini: ${(e as Error).message}`);
         return { ...(await enrichGemini(cfg.geminiKey, input)), enriched_by: 'gemini:fallback' };
       }
     }
