@@ -338,6 +338,20 @@ export const api = {
       return await invokeFn('rss-poller', { subscription_id: id });
     },
 
+    /** Feed items ingested in the last 48h (the FeedsView "fresh" stream). */
+    async recentItems(): Promise<ContentItem[]> {
+      const since = new Date(Date.now() - 48 * 3600_000).toISOString();
+      const { data, error } = await supabase
+        .from('content_items')
+        .select(ITEM_COLUMNS)
+        .eq('source_type', 'rss')
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(100);
+      if (error) throw new Error(`Failed to load feed items: ${error.message}`);
+      return (data ?? []) as unknown as ContentItem[];
+    },
+
     async setActive(id: string, isActive: boolean) {
       const updates: Record<string, unknown> = { is_active: isActive };
       if (isActive) {

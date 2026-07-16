@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ContentItem, Folder, ItemStatus } from '../types';
 import { spotlight } from './magic';
+import HoverPreview from './HoverPreview';
 
 interface ItemCardProps {
   item: ContentItem;
@@ -84,6 +85,11 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
       className={`bento-card spot group relative p-5 transition-all hover:border-white/10 shadow-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8CF38]/60 ${
       viewMode === 'list' ? 'flex items-center gap-5' : 'flex flex-col h-full'
     }`} onMouseMove={spotlight}>
+      <HoverPreview
+        title={title}
+        summary={item.summary || item.description}
+        meta={`${domain}${dateLabel ? ` · ${dateLabel}` : ''}`}
+      />
       <div className={viewMode === 'list' ? 'flex items-center gap-4 flex-grow min-w-0' : 'flex items-center justify-between mb-4'}>
         <div className="flex items-center gap-3 min-w-0 flex-grow">
           <div className="w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center overflow-hidden border border-white/5 bg-[#0A1320] shadow-inner">
@@ -162,9 +168,21 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
       {viewMode === 'grid' && (
         <>
           {status && (
-            <div className={`inline-flex items-center gap-2 self-start px-3 py-1 mb-3 rounded-full border text-[10px] font-black uppercase tracking-widest ${status.className}`}>
-              {status.spin && <i className="fa-solid fa-spinner fa-spin text-[10px]"></i>}
-              {status.label}
+            <div className="flex items-center gap-2 mb-3">
+              <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-widest ${status.className}`}>
+                {status.spin && <i className="fa-solid fa-spinner fa-spin text-[10px]"></i>}
+                {status.label}
+              </div>
+              {/* AI failed or came back thin — always-visible retry (not hover-only). */}
+              {!isProcessing && onRetry && (
+                <button
+                  onClick={(e) => { stop(e); onRetry(item.id); }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-[#A8CF38]/30 bg-[#A8CF38]/10 text-[#A8CF38] text-[10px] font-black uppercase tracking-widest hover:bg-[#A8CF38] hover:text-black transition-all"
+                  title="Retry: re-fetch the page and re-run the AI"
+                >
+                  <i className="fa-solid fa-rotate text-[10px]"></i>Retry AI
+                </button>
+              )}
             </div>
           )}
           <p className="text-zinc-400 text-xs line-clamp-2 leading-relaxed mb-3 flex-grow">

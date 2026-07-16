@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
-import { RssSubscription, FeedCandidate } from '../types';
+import { RssSubscription, FeedCandidate, ContentItem } from '../types';
 
 function timeAgo(iso: string | null): string {
   if (!iso) return 'never';
@@ -12,6 +13,7 @@ function timeAgo(iso: string | null): string {
 }
 
 const FeedsView: React.FC = () => {
+  const navigate = useNavigate();
   const [subs, setSubs] = useState<RssSubscription[]>([]);
   const [loading, setLoading] = useState(true);
   const [input, setInput] = useState('');
@@ -20,10 +22,14 @@ const FeedsView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [recent, setRecent] = useState<ContentItem[]>([]);
+  const [topicFilter, setTopicFilter] = useState<string>('');
 
   const refresh = async () => {
     try {
-      setSubs(await api.feeds.list());
+      const [subsData, recentData] = await Promise.all([api.feeds.list(), api.feeds.recentItems()]);
+      setSubs(subsData);
+      setRecent(recentData);
     } catch (e: any) {
       setError(e.message);
     }
@@ -32,6 +38,13 @@ const FeedsView: React.FC = () => {
   useEffect(() => {
     refresh().finally(() => setLoading(false));
   }, []);
+
+  // Topic dropdown options come from what actually arrived in the last 48h.
+  const topics = useMemo(
+    () => [...new Set(recent.map(i => i.topic).filter(Boolean))].sort() as string[],
+    [recent],
+  );
+  const visibleRecent = topicFilter ? recent.filter(i => i.topic === topicFilter) : recent;
 
   const subscribe = async (candidate: FeedCandidate) => {
     // Candidates scraped from <link> tags haven't been fetched yet — validate first.
@@ -193,6 +206,69 @@ const FeedsView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Fresh from your feeds — last 48h only, filterable by AI topic */}
+      {recent.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 flex items-center gap-2">
+              <i className="fa-solid fa-bolt text-neon-accent"></i> Fresh from your feeds
+              <span className="text-zinc-700 normal-case tracking-normal font-bold">· last 48 hours</span>
+            </p>
+            <div className="flex items-center gap-2">
+              <i className="fa-solid fa-tag text-zinc-600 text-[10px]"></i>
+              <select
+                value={topicFilter}
+                onChange={e => setTopicFilter(e.target.value)}
+                className="bg-white/5 border border-white/10 rounded-full px-4 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 focus:outline-none focus:ring-1 focus:ring-neon-accent cursor-pointer appearance-none"
+                aria-label="Filter by topic"
+              >
+                <option value="" className="bg-[#0D1B2B] text-white">All topics</option>
+                {topics.map(t => (
+                  <option key={t} value={t} className="bg-[#0D1B2B] text-white">{t}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {visibleRecent.length === 0 ? (
+            <p className="text-[11px] font-bold text-zinc-600 py-6 text-center">
+              Nothing under this topic in the last 48 hours.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {visibleRecent.map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => navigate(`/item/${item.id}`)}
+                  className="w-full bento-card p-4 flex items-center gap-4 text-left hover:border-neon-accent/30 transition-all"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                    {item.favicon_url
+                      ? <img src={item.favicon_url} alt="" className="w-5 h-5 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                      : <i className="fa-solid fa-rss text-zinc-600 text-xs"></i>}
+                  </div>
+                  <div className="min-w-0 flex-grow">
+                    <p className="text-xs font-bold text-zinc-200 truncate">{item.title || item.url}</p>
+                    <p className="text-[10px] text-zinc-600 truncate font-bold">
+                      {item.site_name || ''} · {timeAgo(item.published_at || item.created_at)}
+                      {item.summary ? ` — ${item.summary.slice(0, 110)}` : ''}
+                    </p>
+                  </div>
+                  {item.topic && (
+                    <span className="px-2.5 py-0.5 bg-white/5 border border-white/10 rounded-full text-[8px] font-black uppercase tracking-widest text-zinc-500 shrink-0">
+                      {item.topic}
+                    </span>
+                  )}
+                  {item.read_status === 'unread' && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-neon-accent shrink-0" title="Unread"></span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Subscriptions */}
       {subs.length === 0 ? (
