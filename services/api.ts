@@ -375,4 +375,11 @@ export const api = {
       return await invokeFn('tts-generate', { item_id: itemId, mode });
     },
   },
+
+  /** AI translation of an item's title/summary/key points/body (cached server-side). */
+  async translate(itemId: string, lang = 'ar'): Promise<{
+    title: string | null; summary: string | null; key_points: string[]; body: string | null; lang: string; cached: boolean;
+  }> {
+    return await invokeFn('translate', { item_id: itemId, target_lang: lang });
+  },
 };

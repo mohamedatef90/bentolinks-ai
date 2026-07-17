@@ -46,20 +46,22 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
   const [items, setItems] = useState<ContentItem[]>([]);
   const filter = useMemo(() => filterFromParams(searchParams), [searchParams]);
 
-  // The Reading/Bookmarks/All tab is orthogonal to the facet filters, so it
+  // The Reading/Bookmarks/Mobile tab is orthogonal to the facet filters, so it
   // rides in its own `kind` param. Absent = "content" (the Library's default —
-  // articles, videos and social posts); bookmarks live primarily in Vault Hub.
+  // articles, videos and social posts). "mobile" is a saved_via view (links
+  // from the Linkat phone app), not a kind, so it applies no kind filter.
   const kindParam = searchParams.get('kind');
-  const kindTab: 'content' | 'bookmark' | 'all' =
-    kindParam === 'bookmark' ? 'bookmark' : kindParam === 'all' ? 'all' : 'content';
-  const effectiveKind: ItemKind | undefined = kindTab === 'all' ? undefined : kindTab;
+  const kindTab: 'content' | 'bookmark' | 'mobile' =
+    kindParam === 'bookmark' ? 'bookmark' : kindParam === 'mobile' ? 'mobile' : 'content';
+  const effectiveKind: ItemKind | undefined =
+    kindTab === 'bookmark' ? 'bookmark' : kindTab === 'content' ? 'content' : undefined;
 
   const setFilter = (f: FilterState) => {
     const p = paramsFromFilter(f);
     if (kindParam) p.kind = kindParam;
     setSearchParams(p, { replace: true });
   };
-  const setKindTab = (tab: 'content' | 'bookmark' | 'all') => {
+  const setKindTab = (tab: 'content' | 'bookmark' | 'mobile') => {
     const p = paramsFromFilter(filter);
     if (tab !== 'content') p.kind = tab; // 'content' is the default → keep the URL clean
     setSearchParams(p, { replace: true });
@@ -92,7 +94,10 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
         } else if (mode === 'inbox') {
           data = await api.items.fetchByFilter({ sort: 'date_desc' });
         } else {
-          data = await api.items.fetchByFilter({ ...filter, kind: effectiveKind });
+          // The Mobile tab views links saved from the Linkat app (both kinds).
+          const base: FilterState = { ...filter, kind: effectiveKind };
+          if (kindTab === 'mobile') base.saved_via = ['mobile'];
+          data = await api.items.fetchByFilter(base);
         }
         if (!cancelled) setItems(data);
       } catch (err) {
@@ -104,7 +109,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
     };
     load();
     return () => { cancelled = true; };
-  }, [mode, folderId, collectionId, filter, effectiveKind, searchQuery, activeCollection]);
+  }, [mode, folderId, collectionId, filter, effectiveKind, kindTab, searchQuery, activeCollection]);
 
   const availableTags = useMemo(() => {
     const set = new Set<string>();
@@ -184,14 +189,14 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
   };
 
   const title = mode === 'inbox' ? 'Inbox'
-    : mode === 'library' ? (kindTab === 'bookmark' ? 'Bookmarks' : 'Library')
+    : mode === 'library' ? (kindTab === 'bookmark' ? 'Bookmarks' : kindTab === 'mobile' ? 'From your phone' : 'Library')
     : mode === 'folder' ? (activeFolder?.name ?? 'Folder')
     : (activeCollection?.name ?? 'Collection');
 
-  const KIND_TABS: { key: 'content' | 'bookmark' | 'all'; label: string; icon: string; hint: string }[] = [
+  const KIND_TABS: { key: 'content' | 'bookmark' | 'mobile'; label: string; icon: string; hint: string }[] = [
     { key: 'content', label: 'Reading', icon: 'fa-book-open', hint: 'Articles, videos & social posts' },
     { key: 'bookmark', label: 'Bookmarks', icon: 'fa-bookmark', hint: 'Plain website links' },
-    { key: 'all', label: 'All', icon: 'fa-layer-group', hint: 'Everything you saved' },
+    { key: 'mobile', label: 'Mobile', icon: 'fa-mobile-screen', hint: 'Links saved from the Linkat phone app' },
   ];
 
   return (
@@ -274,9 +279,11 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
           const LIBRARY_EMPTY = mode === 'library'
             ? kindTab === 'bookmark'
               ? { icon: 'fa-bookmark', title: 'No bookmarks here', hint: 'Plain website links you save land in your Vault Hub and show up here.' }
-              : kindTab === 'content'
-                ? { icon: 'fa-book-open', title: 'No readable content yet', hint: 'Save an article, video, PDF or social post — once the AI pipeline extracts the text, it appears here.' }
-                : undefined
+              : kindTab === 'mobile'
+                ? { icon: 'fa-mobile-screen', title: 'No phone saves yet', hint: 'Share any link to the Linkat app on your phone — it lands here and on the Vault Hub.' }
+                : kindTab === 'content'
+                  ? { icon: 'fa-book-open', title: 'No readable content yet', hint: 'Save an article, video, PDF or social post — once the AI pipeline extracts the text, it appears here.' }
+                  : undefined
             : undefined;
           const empty = (sys && SYSTEM_EMPTY[sys]) || LIBRARY_EMPTY || {
             icon: 'fa-box-open',

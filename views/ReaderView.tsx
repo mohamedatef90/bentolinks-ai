@@ -15,11 +15,21 @@ const ReaderView: React.FC = () => {
   const hasMarkedRead = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // AI translation (Arabic by default) — fetched on demand, cached server-side.
+  type Translation = { title: string | null; summary: string | null; key_points: string[]; body: string | null };
+  const [translation, setTranslation] = useState<Translation | null>(null);
+  const [translating, setTranslating] = useState(false);
+  const [showArabic, setShowArabic] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     hasMarkedRead.current = false;
     setLoading(true);
+    setTranslation(null);
+    setShowArabic(false);
+    setTranslateError(null);
     api.items.fetchOne(id).then(data => {
       if (cancelled) return;
       setItem(data);
@@ -74,6 +84,24 @@ const ReaderView: React.FC = () => {
   let domain = '';
   try { domain = new URL(item.url).hostname; } catch { /* malformed url */ }
 
+  const handleTranslate = async () => {
+    // Once fetched, the button just toggles between Arabic and the original.
+    if (translation) { setShowArabic(s => !s); return; }
+    setTranslating(true);
+    setTranslateError(null);
+    try {
+      const t = await api.translate(item.id, 'ar');
+      setTranslation({ title: t.title, summary: t.summary, key_points: t.key_points, body: t.body });
+      setShowArabic(true);
+    } catch (e: any) {
+      setTranslateError(e.message || 'Translation failed');
+    } finally {
+      setTranslating(false);
+    }
+  };
+
+  const arabicParagraphs = (translation?.body || '').split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-center justify-between mb-8">
@@ -111,6 +139,19 @@ const ReaderView: React.FC = () => {
             hasFullText={!!item.content_text && item.content_text.trim().length > 0}
           />
 
+          {/* AI translation to Arabic (NVIDIA/Gemini, cached). Toggles once fetched. */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={handleTranslate}
+              disabled={translating}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-white/10 bg-white/5 text-[11px] font-black uppercase tracking-widest text-zinc-300 hover:text-white hover:border-neon-accent/40 transition-all disabled:opacity-50"
+            >
+              <i className={`fa-solid ${translating ? 'fa-spinner fa-spin' : 'fa-language'} text-neon-accent`}></i>
+              {translating ? 'Translating…' : translation ? (showArabic ? 'Show original' : 'اقرأ بالعربية') : 'ترجم للعربية · Translate to Arabic'}
+            </button>
+            {translateError && <span className="text-[11px] font-bold text-red-400">{translateError}</span>}
+          </div>
+
           {(item.summary || (item.key_points && item.key_points.length > 0)) && (
             <div className="bento-card p-8 space-y-5">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 flex items-center gap-2">
@@ -126,6 +167,31 @@ const ReaderView: React.FC = () => {
                     </li>
                   ))}
                 </ul>
+              )}
+            </div>
+          )}
+
+          {showArabic && translation && (
+            <div dir="rtl" className="bento-card p-8 space-y-5 text-right">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 flex items-center gap-2 justify-end">
+                الترجمة العربية <i className="fa-solid fa-language text-neon-accent"></i>
+              </p>
+              {translation.title && <h2 className="text-xl font-black text-zinc-100 leading-snug">{translation.title}</h2>}
+              {translation.summary && <p className="text-zinc-300 text-sm leading-relaxed">{translation.summary}</p>}
+              {translation.key_points.length > 0 && (
+                <ul className="space-y-2">
+                  {translation.key_points.map((point, i) => (
+                    <li key={i} className="flex flex-row-reverse items-start gap-3 text-sm text-zinc-400">
+                      <i className="fa-solid fa-circle-check text-neon-accent text-[10px] mt-1.5 shrink-0"></i>
+                      <span>{point}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {arabicParagraphs.length > 0 && (
+                <div className={`${FONT_SIZES[fontSizeIdx]} text-zinc-300 leading-relaxed space-y-6 font-medium`}>
+                  {arabicParagraphs.map((p, i) => <p key={i}>{p}</p>)}
+                </div>
               )}
             </div>
           )}

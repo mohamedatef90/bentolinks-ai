@@ -41,7 +41,7 @@ export function extractYouTubeId(u: URL): string | null {
 
 const DETECTION_RULES: Array<[RegExp, SourceType]> = [
   [/youtube\.com\/watch|youtu\.be\/|youtube\.com\/shorts\//i, 'youtube'],
-  [/instagram\.com\/(reel|reels)\//i, 'reel'],
+  [/instagram\.com\/(reel|reels|p|tv)\//i, 'reel'],
   [/tiktok\.com\/.+\/video\//i, 'reel'],
   [/(twitter|x)\.com\/[^/]+\/status\//i, 'tweet'],
   [/reddit\.com\/r\/[^/]+\/comments\//i, 'reddit'],
