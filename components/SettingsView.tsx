@@ -1,7 +1,140 @@
 
-import React, { useState } from 'react';
-import { Category, AppTheme } from '../types';
+import React, { useEffect, useState } from 'react';
+import { Category, AppTheme, ApiKey } from '../types';
 import { CATEGORY_COLORS, CATEGORY_ICONS } from '../constants';
+import { api } from '../services/api';
+
+const MCP_ENDPOINT = 'https://sjskpjgepbvblojohtlr.supabase.co/functions/v1/mcp';
+
+/** Self-contained "MCP Access" card: mint / list / revoke personal API keys so
+ *  AI agents (Claude, Codex, …) can read and write the vault. */
+const ApiKeysCard: React.FC = () => {
+  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [newKey, setNewKey] = useState<string | null>(null); // shown once
+  const [copied, setCopied] = useState<'key' | 'cmd' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => api.apiKeys.list().then(setKeys).catch(e => setError(e.message));
+  useEffect(() => { load(); }, []);
+
+  const generate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const plaintext = await api.apiKeys.create(name.trim() || 'API key');
+      setNewKey(plaintext);
+      setName('');
+      await load();
+    } catch (e: any) { setError(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const revoke = async (id: string) => {
+    try { await api.apiKeys.revoke(id); await load(); } catch (e: any) { setError(e.message); }
+  };
+  const remove = async (id: string) => {
+    try { await api.apiKeys.remove(id); await load(); } catch (e: any) { setError(e.message); }
+  };
+
+  const copy = (text: string, which: 'key' | 'cmd') => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(which);
+      setTimeout(() => setCopied(null), 1500);
+    });
+  };
+
+  const addCmd = newKey
+    ? `claude mcp add --transport http refvault ${MCP_ENDPOINT} --header "Authorization: Bearer ${newKey}"`
+    : '';
+
+  const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+
+  return (
+    <div className="bento-card p-10 space-y-8">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3 text-zinc-500 font-black uppercase tracking-widest text-[10px]">
+          <i className="fa-solid fa-robot text-neon-accent"></i>
+          MCP Access · agent API keys
+        </div>
+        <span className="text-[10px] font-bold text-zinc-600">Let Claude, Codex &amp; other agents read/write your vault</span>
+      </div>
+
+      <p className="text-[11px] text-zinc-500 font-bold leading-relaxed -mt-4">
+        Generate a personal key, then connect any MCP-capable agent to{' '}
+        <code className="text-zinc-400 bg-white/5 px-1.5 py-0.5 rounded">{MCP_ENDPOINT}</code>.
+        The agent can create categories, save links &amp; notes, search, and organize — scoped only to your account.
+      </p>
+
+      {/* one-time plaintext reveal */}
+      {newKey && (
+        <div className="rounded-2xl border border-neon-accent/40 bg-neon-accent/[0.06] p-5 space-y-4">
+          <p className="text-[10px] font-black uppercase tracking-widest text-neon-accent flex items-center gap-2">
+            <i className="fa-solid fa-triangle-exclamation"></i> Copy this key now — it won't be shown again
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 min-w-0 truncate text-xs font-mono text-zinc-200 bg-[#0A1320] border border-white/10 rounded-xl px-4 py-3">{newKey}</code>
+            <button onClick={() => copy(newKey, 'key')} className="shrink-0 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-[10px] font-black uppercase tracking-widest transition-all">
+              {copied === 'key' ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <div>
+            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-600 mb-2">Add to Claude Code</p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 min-w-0 truncate text-[11px] font-mono text-zinc-400 bg-[#0A1320] border border-white/10 rounded-xl px-4 py-3">{addCmd}</code>
+              <button onClick={() => copy(addCmd, 'cmd')} className="shrink-0 px-4 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-[10px] font-black uppercase tracking-widest transition-all">
+                {copied === 'cmd' ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+          <button onClick={() => setNewKey(null)} className="text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-white transition-colors">Done</button>
+        </div>
+      )}
+
+      {/* existing keys */}
+      <div className="space-y-2">
+        {keys.length === 0 ? (
+          <p className="text-[11px] font-bold text-zinc-600 py-4 text-center">No API keys yet.</p>
+        ) : keys.map(k => {
+          const revoked = !!k.revoked_at;
+          return (
+            <div key={k.id} className={`flex items-center justify-between gap-4 p-4 bg-white/5 rounded-2xl border border-white/5 ${revoked ? 'opacity-50' : ''}`}>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-sm truncate">{k.name}</span>
+                  {revoked && <span className="px-2 py-0.5 bg-red-500/10 border border-red-500/30 rounded-full text-[8px] font-black uppercase tracking-widest text-red-400">Revoked</span>}
+                </div>
+                <p className="text-[10px] text-zinc-600 font-bold font-mono">{k.key_prefix}…· created {fmt(k.created_at)} · used {fmt(k.last_used_at)}</p>
+              </div>
+              {revoked ? (
+                <button onClick={() => remove(k.id)} className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest text-zinc-500 hover:text-red-400 transition-colors">Delete</button>
+              ) : (
+                <button onClick={() => revoke(k.id)} className="shrink-0 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-red-400 hover:border-red-500/40 transition-all">Revoke</button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {error && <p className="text-[11px] font-bold text-red-400"><i className="fa-solid fa-triangle-exclamation mr-1"></i>{error}</p>}
+
+      <form onSubmit={generate} className="flex gap-3 pt-6 border-t border-white/5">
+        <input
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="KEY NAME (e.g. CODEX, CLAUDE DESKTOP)"
+          className="flex-grow bg-[#0A1320]/50 border border-white/5 rounded-2xl px-6 py-4 text-[11px] font-bold uppercase tracking-widest focus:outline-none focus:ring-1 focus:ring-neon-accent transition-all placeholder:text-zinc-600"
+        />
+        <button type="submit" disabled={busy} className="shrink-0 px-8 py-4 bg-white text-black font-black rounded-2xl text-[11px] uppercase tracking-widest hover:bg-neon-accent transition-all disabled:opacity-50">
+          {busy ? <i className="fa-solid fa-spinner fa-spin"></i> : 'Generate key'}
+        </button>
+      </form>
+    </div>
+  );
+};
 
 interface SettingsViewProps {
   categories: Category[];
@@ -238,6 +371,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
       </div>
+
+      <ApiKeysCard />
     </div>
   );
 };

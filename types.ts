@@ -12,7 +12,17 @@ export type SourceType =
 export type ItemKind = 'bookmark' | 'content';
 
 /** Which client saved the item (web app, Linkat mobile, extension, bulk import, RSS poller). */
-export type SavedVia = 'web' | 'mobile' | 'extension' | 'import' | 'rss';
+export type SavedVia = 'web' | 'mobile' | 'extension' | 'import' | 'rss' | 'mcp';
+
+/** A personal API key for the MCP server (agents read/write the vault). */
+export interface ApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
 
 /** Row shape of the content_items table (fields the UI needs). */
 export interface ContentItem {

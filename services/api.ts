@@ -2,7 +2,7 @@
 // Replaces the old hybrid localStorage/Supabase `db` object.
 
 import { supabase } from './supabase';
-import { ContentItem, Link, Category, Folder, SmartCollection, FilterState, RssSubscription, FeedCandidate } from '../types';
+import { ContentItem, Link, Category, Folder, SmartCollection, FilterState, RssSubscription, FeedCandidate, ApiKey } from '../types';
 
 const ITEM_COLUMNS =
   'id, url, title, description, summary, key_points, tags, topic, source_type, item_kind, status, saved_via, ' +
@@ -381,5 +381,32 @@ export const api = {
     title: string | null; summary: string | null; key_points: string[]; body: string | null; lang: string; cached: boolean;
   }> {
     return await invokeFn('translate', { item_id: itemId, target_lang: lang });
+  },
+
+  /** Personal API keys for the MCP server (agents read/write the vault). */
+  apiKeys: {
+    async list(): Promise<ApiKey[]> {
+      // Explicit columns: `*` would fail — key_hash is revoked from select.
+      const { data, error } = await supabase
+        .from('api_keys')
+        .select('id, name, key_prefix, created_at, last_used_at, revoked_at')
+        .order('created_at', { ascending: false });
+      if (error) throw new Error(`Failed to load API keys: ${error.message}`);
+      return (data ?? []) as ApiKey[];
+    },
+    /** Mint a key — the plaintext is returned exactly once and never stored. */
+    async create(name: string): Promise<string> {
+      const { data, error } = await supabase.rpc('create_api_key', { key_name: name });
+      if (error) throw new Error(`Create key failed: ${error.message}`);
+      return data as string;
+    },
+    async revoke(id: string) {
+      const { error } = await supabase.from('api_keys').update({ revoked_at: new Date().toISOString() }).eq('id', id);
+      if (error) throw new Error(`Revoke failed: ${error.message}`);
+    },
+    async remove(id: string) {
+      const { error } = await supabase.from('api_keys').delete().eq('id', id);
+      if (error) throw new Error(`Delete failed: ${error.message}`);
+    },
   },
 };
