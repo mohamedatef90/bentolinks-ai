@@ -133,6 +133,16 @@ const ReaderView: React.FC = () => {
             </a>
           </div>
 
+          {/* Article / post / reel hero image */}
+          {item.thumbnail_url && (
+            <img
+              src={item.thumbnail_url}
+              alt=""
+              className="w-full rounded-3xl border border-white/[0.06] object-cover max-h-[420px] shadow-2xl shadow-black/40"
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
+          )}
+
           <TtsPlayer
             itemId={item.id}
             hasSummary={!!item.summary}
