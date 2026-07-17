@@ -11,6 +11,7 @@ import { parseTweet } from '../_shared/parsers/tweet.ts';
 import { parsePdf } from '../_shared/parsers/pdf.ts';
 import { parseReel } from '../_shared/parsers/reel.ts';
 import { parseReddit } from '../_shared/parsers/reddit.ts';
+import { parseFacebook, isFacebookContentUrl } from '../_shared/parsers/facebook.ts';
 import { ParsedContent } from '../_shared/parsers/types.ts';
 import { embedText } from '../_shared/gemini.ts';
 import { enrich, LlmProvider, ProviderConfig } from '../_shared/llm.ts';
@@ -24,6 +25,11 @@ async function parseBySourceType(
   item: { url: string; source_type: string },
   geminiKey: string | null,
 ): Promise<ParsedContent> {
+  // Facebook has no source_type of its own (URL 400s the generic parser), so it
+  // dispatches by URL — but only for real post/reel/video links, not FB tool pages.
+  if (isFacebookContentUrl(item.url)) {
+    return await parseFacebook(item.url, { apifyToken: await getSecret(db, 'APIFY_TOKEN') });
+  }
   switch (item.source_type) {
     case 'youtube':
       return await parseYouTube(item.url, geminiKey);

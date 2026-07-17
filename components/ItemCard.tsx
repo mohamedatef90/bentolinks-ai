@@ -69,9 +69,12 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
   // Bookmarks have no reader content — the card opens the source directly.
   // Content opens the in-app reader (summary, key points, TTS).
   const openCard = () => {
-    if (isBookmark) { window.open(item.url, '_blank', 'noopener,noreferrer'); return; }
+    // Phone-saved links open the in-app reader ("read mode") like content does.
+    if (isBookmark && !fromMobile) { window.open(item.url, '_blank', 'noopener,noreferrer'); return; }
     navigate(`/item/${item.id}`);
   };
+  // Social posts / reels carry a real preview image — show it instead of the favicon.
+  const thumb = item.thumbnail_url;
   // Let the inner controls (star, read-status, Visit site) act without triggering the card.
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
@@ -94,9 +97,9 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
         <div className="flex items-center gap-3 min-w-0 flex-grow">
           <div className="w-12 h-12 shrink-0 rounded-2xl flex items-center justify-center overflow-hidden border border-white/5 bg-[#0A1320] shadow-inner">
             <img
-              src={item.favicon_url || `https://www.google.com/s2/favicons?sz=64&domain=${item.url}`}
+              src={thumb || item.favicon_url || `https://www.google.com/s2/favicons?sz=64&domain=${item.url}`}
               alt=""
-              className="w-7 h-7 object-contain"
+              className={thumb ? 'w-full h-full object-cover' : 'w-7 h-7 object-contain'}
               onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${title}&background=0D1B2B&color=fff`)}
             />
           </div>

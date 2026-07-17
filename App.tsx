@@ -462,14 +462,11 @@ const App: React.FC = () => {
     [links]
   );
 
+  // Everything saved from the Linkat phone app — both bookmarks and content —
+  // gets its own home section (and opens the in-app reader on click).
   const phoneLinks = useMemo<Link[]>(
-    () => vaultLinks.filter(l => l.savedVia === 'mobile').slice(0, 8),
-    [vaultLinks]
-  );
-
-  const mobileCollectionId = useMemo(
-    () => smartCollections.find(c => c.query?.system === 'mobile')?.id,
-    [smartCollections]
+    () => links.filter(l => l.savedVia === 'mobile').slice(0, 8),
+    [links]
   );
 
   const pinnedLinks = useMemo<Link[]>(() => {
@@ -505,7 +502,11 @@ const App: React.FC = () => {
 
   const latestContent = useMemo<Link[]>(() => libraryLinks.slice(0, 6), [libraryLinks]);
 
-  const recentlySaved = useMemo<Link[]>(() => vaultLinks.slice(0, 12), [vaultLinks]);
+  // Phone saves have their own section, so keep them out of Recently bookmarked.
+  const recentlySaved = useMemo<Link[]>(
+    () => vaultLinks.filter(l => l.savedVia !== 'mobile').slice(0, 12),
+    [vaultLinks]
+  );
 
   const queueCollectionId = useMemo(
     () => smartCollections.find(c => c.query?.system === 'queue')?.id,
@@ -917,35 +918,33 @@ const App: React.FC = () => {
                             <span className="eyebrow">From your phone</span>
                             {reorderControls}
                             <div className="h-px flex-grow bg-white/5"></div>
-                            {mobileCollectionId && (
-                              <NavLink to={`/collection/${mobileCollectionId}`} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
-                                View all <i className="fa-solid fa-arrow-right ml-1"></i>
-                              </NavLink>
-                            )}
+                            <NavLink to="/library?kind=mobile" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
+                              View all <i className="fa-solid fa-arrow-right ml-1"></i>
+                            </NavLink>
                           </div>
                           <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
                             {phoneLinks.map(link => (
-                              <a
+                              <NavLink
                                 key={`phone-${link.id}`}
-                                href={link.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                                to={`/item/${link.id}`}
                                 className="bento-card spot shrink-0 w-64 p-5 hover:border-white/10 transition-all group/phone"
                                 onMouseMove={spotlight}
                               >
                                 <div className="flex items-center gap-3 mb-3">
                                   <div className="w-9 h-9 rounded-xl bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
                                     <img
-                                      src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
+                                      src={link.thumbnailUrl || link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
                                       alt=""
-                                      className="w-5 h-5 object-contain"
+                                      className={link.thumbnailUrl ? 'w-full h-full object-cover' : 'w-5 h-5 object-contain'}
                                       onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=0D1B2B&color=fff`)}
                                     />
                                   </div>
-                                  <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600 font-mono-data">{timeAgo(link.createdAt)} ago</span>
+                                  <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-sky-300/80">
+                                    <i className="fa-solid fa-mobile-screen text-[10px]"></i>{timeAgo(link.createdAt)} ago
+                                  </span>
                                 </div>
-                                <p className="text-xs font-bold text-zinc-300 leading-snug line-clamp-2 group-hover/phone:text-white transition-colors">{link.title}</p>
-                              </a>
+                                <p className="text-xs font-bold text-zinc-300 leading-snug line-clamp-2 group-hover/phone:text-[#A8CF38] transition-colors">{link.title}</p>
+                              </NavLink>
                             ))}
                           </div>
                         </section>

@@ -72,11 +72,14 @@ const LinkCard: React.FC<LinkCardProps> = ({
       ? { label: 'Read again', icon: 'fa-rotate-left' }
       : { label: 'Read', icon: 'fa-book-open' };
 
-  // Bookmarks open the source directly (no reader content); content opens the reader.
+  // Links saved from the phone (Linkat) open the in-app reader like content, so
+  // they get "read mode" too; other bookmarks open the source directly.
   const openCard = () => {
-    if (isBookmark) { window.open(link.url, '_blank', 'noopener,noreferrer'); return; }
+    if (isBookmark && !fromMobile) { window.open(link.url, '_blank', 'noopener,noreferrer'); return; }
     navigate(`/item/${link.id}`);
   };
+  // Social posts / reels carry a real preview image — show it instead of the favicon.
+  const thumb = link.thumbnailUrl;
   // Inner controls (pin, delete, star, read-status, folder select, Visit site) act without triggering the card.
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
@@ -99,9 +102,9 @@ const LinkCard: React.FC<LinkCardProps> = ({
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl flex items-center justify-center overflow-hidden border border-white/5 bg-[#0A1320] shadow-inner group-hover:border-[#A8CF38]/30 transition-colors">
             <img
-              src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
-              alt="favicon"
-              className="w-7 h-7 object-contain"
+              src={thumb || link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
+              alt=""
+              className={thumb ? 'w-full h-full object-cover' : 'w-7 h-7 object-contain'}
               onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=0D1B2B&color=fff`)}
             />
           </div>
