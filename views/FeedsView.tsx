@@ -270,7 +270,16 @@ const FeedsView: React.FC = () => {
         </div>
       )}
 
-      {/* Subscriptions */}
+      {/* Your sources — manage subscriptions */}
+      {subs.length > 0 && (
+        <div className="flex items-center gap-3 pt-2">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 flex items-center gap-2">
+            <i className="fa-solid fa-sliders text-neon-accent"></i> Your sources
+            <span className="text-zinc-700 normal-case tracking-normal font-bold">· sync, pause or remove</span>
+          </p>
+          <div className="h-px flex-grow bg-white/5"></div>
+        </div>
+      )}
       {subs.length === 0 ? (
         <div className="py-20 flex flex-col items-center text-center space-y-6">
           <div className="w-16 h-16 rounded-3xl bg-[#0D1B2B] border border-white/[0.06] flex items-center justify-center">
