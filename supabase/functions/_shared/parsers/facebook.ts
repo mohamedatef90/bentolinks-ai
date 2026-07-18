@@ -197,9 +197,15 @@ export async function parseFacebook(url: string, keys: FacebookKeys): Promise<Pa
   const isVideo = !!videoUrl || !!post.video || !!post.short_form_video_context ||
     !!post.videoDeliveryLegacyFields;
 
-  const title = content
-    ? content.split('\n')[0].slice(0, 120)
-    : (author ? `Facebook ${isVideo ? 'video' : 'post'} by ${author}` : 'Facebook post');
+  // Title comes from the CAPTION only — never the merged content, so a
+  // caption-less video never gets the "Spoken content:" label as its title.
+  // With no caption we hand a neutral fallback; enrichment supplies the real
+  // AI title from the transcript.
+  const title = caption
+    ? caption.split('\n')[0].slice(0, 120)
+    : (author
+        ? `Facebook ${isVideo ? 'video' : 'post'} by ${author}`
+        : `Facebook ${isVideo ? 'video' : 'post'}`);
 
   return {
     title,
