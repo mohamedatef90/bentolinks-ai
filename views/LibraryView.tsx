@@ -196,7 +196,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
   const KIND_TABS: { key: 'content' | 'bookmark' | 'mobile'; label: string; icon: string; hint: string }[] = [
     { key: 'content', label: 'Reading', icon: 'fa-book-open', hint: 'Articles, videos & social posts' },
     { key: 'bookmark', label: 'Bookmarks', icon: 'fa-bookmark', hint: 'Plain website links' },
-    { key: 'mobile', label: 'Mobile', icon: 'fa-mobile-screen', hint: 'Links saved from the Linkat phone app' },
+    { key: 'mobile', label: 'Mobile', icon: 'fa-mobile-screen', hint: 'Links saved from the Qlip phone app' },
   ];
 
   return (
@@ -268,8 +268,8 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
         (() => {
           // System collections explain how they fill instead of a generic "nothing here".
           const SYSTEM_EMPTY: Record<string, { icon: string; title: string; hint: string }> = {
-            resurface: { icon: 'fa-rotate', title: 'Nothing resurfaced yet', hint: 'Every night RefVault picks up to 5 items you finished reading more than two weeks ago. Read a few articles and picks appear tomorrow morning.' },
-            mobile: { icon: 'fa-mobile-screen', title: 'No phone saves yet', hint: 'Share any link to the Linkat app on your phone — it lands here and on the Vault Hub.' },
+            resurface: { icon: 'fa-rotate', title: 'Nothing resurfaced yet', hint: 'Every night Qlip picks up to 5 items you finished reading more than two weeks ago. Read a few articles and picks appear tomorrow morning.' },
+            mobile: { icon: 'fa-mobile-screen', title: 'No phone saves yet', hint: 'Share any link to the Qlip app on your phone — it lands here and on the Vault Hub.' },
             rss: { icon: 'fa-rss', title: 'No feed items yet', hint: 'Subscribe to a feed in the Feeds tab. New posts are pulled every 30 minutes and enriched automatically.' },
             social: { icon: 'fa-comment-dots', title: 'No social posts yet', hint: 'Save a tweet, Instagram reel, TikTok, or Reddit thread and it collects here.' },
             queue: { icon: 'fa-book-open', title: 'Reading queue is clear', hint: 'Anything marked Unread or Reading waits for you here.' },
@@ -280,7 +280,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
             ? kindTab === 'bookmark'
               ? { icon: 'fa-bookmark', title: 'No bookmarks here', hint: 'Plain website links you save land in your Vault Hub and show up here.' }
               : kindTab === 'mobile'
-                ? { icon: 'fa-mobile-screen', title: 'No phone saves yet', hint: 'Share any link to the Linkat app on your phone — it lands here and on the Vault Hub.' }
+                ? { icon: 'fa-mobile-screen', title: 'No phone saves yet', hint: 'Share any link to the Qlip app on your phone — it lands here and on the Vault Hub.' }
                 : kindTab === 'content'
                   ? { icon: 'fa-book-open', title: 'No readable content yet', hint: 'Save an article, video, PDF or social post — once the AI pipeline extracts the text, it appears here.' }
                   : undefined

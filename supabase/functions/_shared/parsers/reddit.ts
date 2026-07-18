@@ -7,7 +7,7 @@
 import { ParsedContent, wordCount } from './types.ts';
 
 // Reddit requires a unique, descriptive User-Agent — generic/browser UAs get throttled.
-const REDDIT_UA = 'web:refvault:1.0 (by /u/refvault)';
+const REDDIT_UA = 'web:qlip:1.0 (by /u/qlip)';
 
 export interface RedditKeys {
   clientId: string | null;

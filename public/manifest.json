@@ -1,27 +1,27 @@
 {
-  "name": "BentoLinks AI",
-  "short_name": "BentoLinks",
-  "description": "AI-powered link manager with intelligent categorization",
+  "name": "Qlip — AI knowledge vault",
+  "short_name": "Qlip",
+  "description": "Save anything and turn it into readable, searchable knowledge with AI.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0a0a",
-  "theme_color": "#c1ff00",
+  "background_color": "#0A1320",
+  "theme_color": "#A8CF38",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    },
-    {
       "src": "/favicon.png",
-      "sizes": "32x32",
+      "sizes": "48x48",
       "type": "image/png"
     },
     {
-      "src": "/apple-touch-icon.png",
+      "src": "/icon-192.png",
       "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
     }
@@ -31,12 +31,12 @@
     {
       "name": "Add Link",
       "short_name": "Add",
-      "description": "Add a new link",
+      "description": "Save a new link",
       "url": "/?action=add",
       "icons": [
         {
-          "src": "/favicon.svg",
-          "sizes": "96x96"
+          "src": "/icon-192.png",
+          "sizes": "192x192"
         }
       ]
     }

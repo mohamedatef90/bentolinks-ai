@@ -228,7 +228,7 @@ async function uploadFile(apiKey: string, bytes: Uint8Array, mimeType: string): 
       'X-Goog-Upload-Header-Content-Type': mimeType,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ file: { display_name: 'refvault-upload' } }),
+    body: JSON.stringify({ file: { display_name: 'qlip-upload' } }),
     signal: AbortSignal.timeout(30_000),
   });
   const uploadUrl = start.headers.get('x-goog-upload-url');

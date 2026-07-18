@@ -595,10 +595,10 @@ const App: React.FC = () => {
       <nav className="h-20 flex items-center justify-between px-6 lg:px-12 sticky top-0 bg-[#0A1320]/75 backdrop-blur-xl z-40 border-b border-white/[0.04]">
         <div className="flex items-center gap-12">
           <NavLink to="/" className="flex items-center gap-3 group cursor-pointer">
-            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center rotate-3 group-hover:rotate-0 transition-transform duration-300 overflow-hidden p-1 shadow-lg border border-white/10">
-              <img src="https://i.postimg.cc/L5YGmDmQ/0058ae6839e5283293bcada1598f2309.jpg" alt="Logo" className="w-full h-full object-contain rounded-lg" />
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center rotate-3 group-hover:rotate-0 transition-transform duration-300 shadow-lg" style={{ background: 'linear-gradient(135deg,#7CB342,#A8CF38)' }}>
+              <span className="text-[#0A1320] font-black text-lg leading-none tracking-tighter">Q</span>
             </div>
-            <span className="hidden sm:inline font-extrabold text-xl tracking-tighter uppercase">BentoLinks</span>
+            <span className="hidden sm:inline font-extrabold text-xl tracking-tighter">Qlip</span>
           </NavLink>
           <div className="hidden lg:flex items-center bg-[#0D1B2B] border border-white/[0.04] rounded-full p-1.5 shadow-xl">
             <NavLink to="/" end className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Vault Hub</NavLink>

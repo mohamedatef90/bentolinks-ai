@@ -14,7 +14,7 @@ export interface ParsedArticle {
 }
 
 const UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 RefVault/1.0';
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 Qlip/1.0';
 
 function meta(document: any, ...selectors: string[]): string | null {
   for (const sel of selectors) {
