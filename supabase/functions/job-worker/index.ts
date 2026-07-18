@@ -28,7 +28,10 @@ async function parseBySourceType(
   // Facebook has no source_type of its own (URL 400s the generic parser), so it
   // dispatches by URL — but only for real post/reel/video links, not FB tool pages.
   if (isFacebookContentUrl(item.url)) {
-    return await parseFacebook(item.url, { apifyToken: await getSecret(db, 'APIFY_TOKEN') });
+    return await parseFacebook(item.url, {
+      apifyToken: await getSecret(db, 'APIFY_TOKEN'),
+      geminiKey,
+    });
   }
   switch (item.source_type) {
     case 'youtube':
