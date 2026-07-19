@@ -128,6 +128,7 @@ export interface Link {
   sourceType?: SourceType;
   savedVia?: SavedVia;
   kind?: ItemKind;
+  topic?: string | null;
 }
 
 export interface Category {
