@@ -451,7 +451,13 @@ const App: React.FC = () => {
   // Vault Hub is the home for BOOKMARKS — plain website links you saved to
   // reference. Articles, social posts and videos are "content" and live in the
   // Library; RSS lives in /feeds. `item_kind` is computed server-side.
-  const vaultLinks = useMemo<Link[]>(() => links.filter(l => l.kind === 'bookmark'), [links]);
+  // Bookmarks exclude phone/extension saves (saved_via='mobile') — those live
+  // only in the "From your phone" section + Library Mobile tab. Drives the
+  // Bookmarks stat, Priority Vault and Recently bookmarked.
+  const vaultLinks = useMemo<Link[]>(
+    () => links.filter(l => l.kind === 'bookmark' && l.savedVia !== 'mobile'),
+    [links]
+  );
 
   // Readable/watchable content — the Library's material. Surfaced on the home
   // only as bridges (continue reading, latest) that deep-link into /library.
@@ -483,16 +489,35 @@ const App: React.FC = () => {
   );
 
   // Home is a daily briefing: capped, purposeful sections. The full archive lives in /library.
+  // Smart global search: spans the whole vault (bookmarks + content), matching
+  // title, url, summary, topic and tags — so you can search by topic or any word.
   const searchMatches = useMemo<Link[]>(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return [];
-    return vaultLinks.filter(link =>
+    return links.filter(link =>
       link.title.toLowerCase().includes(q) ||
       link.url.toLowerCase().includes(q) ||
       (link.summary || '').toLowerCase().includes(q) ||
-      (link.tags || []).some(t => t.includes(q))
+      (link.topic || '').toLowerCase().includes(q) ||
+      (link.tags || []).some(t => t.toLowerCase().includes(q))
     );
-  }, [vaultLinks, searchQuery]);
+  }, [links, searchQuery]);
+
+  // Search results grouped into source sections (Articles, Videos, Reels, …).
+  const SOURCE_LABELS: Record<string, string> = {
+    article: 'Articles', youtube: 'Videos', reel: 'Reels', tweet: 'Posts',
+    reddit: 'Reddit', pdf: 'PDFs', rss: 'Feeds', podcast: 'Podcasts', other: 'Other',
+    bookmark: 'Bookmarks',
+  };
+  const searchGroups = useMemo(() => {
+    const by = new Map<string, Link[]>();
+    for (const link of searchMatches) {
+      const key = link.kind === 'bookmark' ? 'bookmark' : (link.sourceType ?? 'other');
+      (by.get(key) ?? by.set(key, []).get(key)!).push(link);
+    }
+    const order = ['article','youtube','reel','tweet','reddit','pdf','podcast','rss','other','bookmark'];
+    return [...by.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+  }, [searchMatches]);
 
   // "Reading" is a content concept — this section bridges the home into /library.
   const continueReading = useMemo<Link[]>(
@@ -595,10 +620,10 @@ const App: React.FC = () => {
       <nav className="h-20 flex items-center justify-between px-6 lg:px-12 sticky top-0 bg-[#0A1320]/75 backdrop-blur-xl z-40 border-b border-white/[0.04]">
         <div className="flex items-center gap-12">
           <NavLink to="/" className="flex items-center gap-3 group cursor-pointer">
-            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center rotate-3 group-hover:rotate-0 transition-transform duration-300 overflow-hidden p-1 shadow-lg border border-white/10">
-              <img src="https://i.postimg.cc/L5YGmDmQ/0058ae6839e5283293bcada1598f2309.jpg" alt="Logo" className="w-full h-full object-contain rounded-lg" />
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center rotate-3 group-hover:rotate-0 transition-transform duration-300 shadow-lg" style={{ background: 'linear-gradient(135deg,#7CB342,#A8CF38)' }}>
+              <span className="text-[#0A1320] font-black text-lg leading-none tracking-tighter">Q</span>
             </div>
-            <span className="hidden sm:inline font-extrabold text-xl tracking-tighter uppercase">BentoLinks</span>
+            <span className="hidden sm:inline font-extrabold text-xl tracking-tighter">Qlip</span>
           </NavLink>
           <div className="hidden lg:flex items-center bg-[#0D1B2B] border border-white/[0.04] rounded-full p-1.5 shadow-xl">
             <NavLink to="/" end className={({ isActive }) => `px-6 py-2 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${isActive ? 'bg-neon-accent text-black' : 'text-zinc-500 hover:text-white'}`}>Vault Hub</NavLink>
@@ -873,9 +898,20 @@ const App: React.FC = () => {
                   <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-full">{searchMatches.length} matches</span>
                 </div>
                 {searchMatches.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
-                    {searchMatches.map(link => (
-                      <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} onRetry={handleRetryLink} />
+                  <div className="space-y-10">
+                    {searchGroups.map(([key, groupLinks]) => (
+                      <div key={key} className="space-y-4">
+                        <div className="flex items-center gap-3">
+                          <h3 className="text-[11px] font-black uppercase tracking-[0.25em] text-neon-accent">{SOURCE_LABELS[key] ?? key}</h3>
+                          <span className="text-[10px] text-zinc-600 font-black">{groupLinks.length}</span>
+                          <div className="h-px flex-grow bg-white/5"></div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
+                          {groupLinks.map(link => (
+                            <LinkCard key={link.id} link={link} category={categories.find(c => c.id === link.categoryId)} categories={categories} onDelete={confirmDeleteLink} onTogglePin={togglePin} onToggleStar={toggleStarLink} onCycleReadStatus={cycleReadStatusLink} onUpdateLink={handleUpdateLink} onChangeCategory={handleCategoryChange} onRetry={handleRetryLink} />
+                          ))}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 ) : (

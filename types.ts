@@ -11,7 +11,7 @@ export type SourceType =
  */
 export type ItemKind = 'bookmark' | 'content';
 
-/** Which client saved the item (web app, Linkat mobile, extension, bulk import, RSS poller). */
+/** Which client saved the item (web app, Qlip mobile, extension, bulk import, RSS poller). */
 export type SavedVia = 'web' | 'mobile' | 'extension' | 'import' | 'rss' | 'mcp';
 
 /** A personal API key for the MCP server (agents read/write the vault). */
@@ -128,6 +128,7 @@ export interface Link {
   sourceType?: SourceType;
   savedVia?: SavedVia;
   kind?: ItemKind;
+  topic?: string | null;
 }
 
 export interface Category {

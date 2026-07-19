@@ -47,7 +47,7 @@ const ApiKeysCard: React.FC = () => {
   };
 
   const addCmd = newKey
-    ? `claude mcp add --transport http refvault ${MCP_ENDPOINT} --header "Authorization: Bearer ${newKey}"`
+    ? `claude mcp add --transport http qlip ${MCP_ENDPOINT} --header "Authorization: Bearer ${newKey}"`
     : '';
 
   const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
