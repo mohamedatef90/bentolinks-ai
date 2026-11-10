@@ -2,9 +2,9 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# BentoLinks · RefVault
+# Qlip
 
-An **AI knowledge vault** for everything you save. BentoLinks is the React web app; it shares one Supabase backend with the **Linkat** iOS app, so a link saved on your phone and a link saved on the web land in the same place and go through the same AI pipeline.
+An **AI knowledge vault** for everything you save. Qlip is the React web app; it shares one Supabase backend with the **Qlip** iOS app, so a link saved on your phone and a link saved on the web land in the same place and go through the same AI pipeline.
 
 Every URL you save is fetched, read, and enriched by AI — a clean title, a summary, key points, a topic, and tags — then made searchable. Plain website links live in the **Vault Hub**; articles, videos, social posts, PDFs, and feeds live in the **Library**.
 
@@ -52,7 +52,7 @@ npm run preview    # preview the production build
 AI agents can read and write your vault over MCP (Streamable HTTP). In the app, go to **Settings → MCP Access**, generate a personal API key, then connect any MCP-capable agent:
 
 ```bash
-claude mcp add --transport http refvault \
+claude mcp add --transport http qlip \
   https://sjskpjgepbvblojohtlr.supabase.co/functions/v1/mcp \
   --header "Authorization: Bearer rv_YOUR_KEY"
 ```

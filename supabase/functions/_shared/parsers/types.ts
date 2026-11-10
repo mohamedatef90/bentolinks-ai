@@ -14,7 +14,7 @@ export interface ParsedContent {
 }
 
 export const PARSER_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 RefVault/1.0';
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 Qlip/1.0';
 
 export function wordCount(text: string | null): number | null {
   return text ? text.trim().split(/\s+/).length : null;

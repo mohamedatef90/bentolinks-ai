@@ -42,6 +42,7 @@ export function toLink(item: ContentItem): Link {
     sourceType: item.source_type,
     savedVia: item.saved_via,
     kind: item.item_kind ?? (item.source_type === 'article' && !item.summary ? 'bookmark' : 'content'),
+    topic: item.topic,
   };
 }
 
@@ -92,6 +93,9 @@ export const api = {
       if (filter.kind) query = query.eq('item_kind', filter.kind);
       if (filter.source_type?.length) query = query.in('source_type', filter.source_type);
       if (filter.saved_via?.length) query = query.in('saved_via', filter.saved_via);
+      // Bookmarks view excludes phone/extension saves (they have the Mobile tab).
+      // `.or` keeps rows with a null saved_via (PostgREST .neq would drop nulls).
+      else if (filter.kind === 'bookmark') query = query.or('saved_via.is.null,saved_via.neq.mobile');
       if (filter.read_status?.length) query = query.in('read_status', filter.read_status);
       if (filter.topic) query = query.eq('topic', filter.topic);
       if (filter.is_starred) query = query.eq('is_starred', true);

@@ -28,7 +28,10 @@ async function parseBySourceType(
   // Facebook has no source_type of its own (URL 400s the generic parser), so it
   // dispatches by URL — but only for real post/reel/video links, not FB tool pages.
   if (isFacebookContentUrl(item.url)) {
-    return await parseFacebook(item.url, { apifyToken: await getSecret(db, 'APIFY_TOKEN') });
+    return await parseFacebook(item.url, {
+      apifyToken: await getSecret(db, 'APIFY_TOKEN'),
+      geminiKey,
+    });
   }
   switch (item.source_type) {
     case 'youtube':
@@ -136,11 +139,19 @@ async function handleEnrich(db: SupabaseClient, job: Job, llm: ProviderConfig) {
   const userTags: string[] = item.tags ?? [];
   const mergedTags = [...new Set([...userTags, ...result.tags])].slice(0, 10);
 
-  // Keep a real parsed title; replace missing or URL-looking ones with the AI's.
+  // Titles: keep an authoritative parsed title (article/RSS/PDF/YouTube page
+  // titles are good). For social posts the parsed "title" is just a caption
+  // fragment (or a fallback), so prefer the AI's clean suggested_title.
+  const isSocial =
+    item.source_type === 'reel' ||
+    item.source_type === 'tweet' ||
+    item.source_type === 'reddit' ||
+    isFacebookContentUrl(item.url);
   const hasRealTitle = !!item.title?.trim() && !/^https?:\/\//i.test(item.title.trim());
+  const useAiTitle = (!hasRealTitle || isSocial) && !!result.suggested_title;
 
   await db.from('content_items').update({
-    title: hasRealTitle ? item.title : (result.suggested_title || item.title),
+    title: useAiTitle ? result.suggested_title : (item.title || result.suggested_title),
     summary: result.summary,
     key_points: result.key_points,
     topic: result.topic_category,

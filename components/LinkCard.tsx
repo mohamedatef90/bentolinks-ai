@@ -125,7 +125,7 @@ const LinkCard: React.FC<LinkCardProps> = ({
             {fromMobile && (
               <span
                 aria-label="Saved from your phone"
-                title="Saved from your phone (Linkat)"
+                title="Saved from your phone (Qlip)"
                 className="w-9 h-9 rounded-xl border grid place-items-center text-sky-300 bg-sky-400/10 border-sky-400/30"
               >
                 <i className="fa-solid fa-mobile-screen text-xs"></i>

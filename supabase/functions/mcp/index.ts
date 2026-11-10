@@ -1,4 +1,4 @@
-// RefVault MCP server — lets AI agents (Claude, Codex, etc.) read and write the
+// Qlip MCP server — lets AI agents (Claude, Codex, etc.) read and write the
 // vault. Speaks MCP over Streamable HTTP, statelessly: each POST carries JSON-RPC
 // and gets a single JSON response (no server-initiated SSE). Auth is a personal
 // API key (`Authorization: Bearer rv_...`, see _shared/apiKeys.ts); every query
@@ -405,14 +405,14 @@ async function handleMessage(db: SupabaseClient, userId: string | null, msg: Rec
   const params = (msg.params as Record<string, unknown>) ?? {};
   const isNotification = msg.id === undefined || msg.id === null;
 
-  if (!userId) return isNotification ? null : rpcError(id, -32001, 'Unauthorized: send a valid RefVault API key as `Authorization: Bearer rv_...`');
+  if (!userId) return isNotification ? null : rpcError(id, -32001, 'Unauthorized: send a valid Qlip API key as `Authorization: Bearer rv_...`');
 
   switch (method) {
     case 'initialize':
       return rpcResult(id, {
         protocolVersion: (params.protocolVersion as string) ?? PROTOCOL_VERSION,
         capabilities: { tools: {} },
-        serverInfo: { name: 'refvault', version: '1.0.0' },
+        serverInfo: { name: 'qlip', version: '1.0.0' },
       });
     case 'notifications/initialized':
     case 'notifications/cancelled':

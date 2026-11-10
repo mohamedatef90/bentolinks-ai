@@ -82,8 +82,8 @@ const AuthView: React.FC = () => {
           {/* Header Section */}
           <div className="flex flex-col items-center mb-10 text-center">
             <div className="relative mb-6 group">
-              <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center relative shadow-2xl transition-transform group-hover:scale-110 duration-500 overflow-hidden">
-                 <img src="https://i.postimg.cc/L5YGmDmQ/0058ae6839e5283293bcada1598f2309.jpg" className="w-11 h-11 object-contain" alt="BentoLinks Logo" />
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center relative shadow-2xl transition-transform group-hover:scale-110 duration-500" style={{ background: 'linear-gradient(135deg,#7CB342,#A8CF38)' }}>
+                 <span className="text-[#0A1320] font-black text-3xl leading-none tracking-tighter">Q</span>
               </div>
             </div>
             
@@ -202,7 +202,7 @@ const AuthView: React.FC = () => {
         
         {/* Footer Credit */}
         <p className="mt-8 text-center text-[10px] font-black text-zinc-700 uppercase tracking-[0.4em]">
-          BentoLinks Neural Hub &copy; 2025
+          Qlip Neural Hub &copy; 2025
         </p>
       </div>
     </div>
