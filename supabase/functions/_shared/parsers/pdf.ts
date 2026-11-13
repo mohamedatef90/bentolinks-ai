@@ -4,6 +4,7 @@
 
 import { extractText, getDocumentProxy, getMeta } from 'npm:unpdf@0.12';
 import { extractPdfViaGemini } from '../gemini.ts';
+import { safeFetch } from '../net.ts';
 import { ParsedContent, PARSER_UA, wordCount } from './types.ts';
 
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
@@ -38,11 +39,10 @@ async function readCapped(res: Response, cap: number): Promise<Uint8Array> {
 }
 
 export async function parsePdf(url: string, geminiKey: string | null): Promise<ParsedContent> {
-  const res = await fetch(url, {
+  const res = await safeFetch(url, {
     headers: { 'User-Agent': PARSER_UA, Accept: 'application/pdf,*/*' },
     signal: AbortSignal.timeout(30_000),
-    redirect: 'follow',
-  });
+  }, { maxBytes: MAX_PDF_BYTES });
   if (!res.ok) throw new Error(`Fetch failed: HTTP ${res.status}`);
   const declared = Number(res.headers.get('content-length') ?? 0);
   if (declared > MAX_PDF_BYTES) {

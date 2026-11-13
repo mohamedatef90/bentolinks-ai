@@ -12,7 +12,7 @@ export function createFakeDb(seed = {}) {
   const table = (name) => (tables[name] ??= []);
 
   function builder(name) {
-    const state = { op: 'select', filters: [], payload: null, wantsRow: false };
+    const state = { op: 'select', filters: [], payload: null, wantsRow: false, onConflict: null };
     const run = () => {
       const rows = table(name);
       const match = (r) => state.filters.every(([c, v]) => r[c] === v);
@@ -22,6 +22,18 @@ export function createFakeDb(seed = {}) {
         rows.push(...inserted);
         writes.push({ op: 'insert', table: name, rows: inserted.map((r) => ({ ...r })) });
         return { data: inserted, error: null };
+      }
+      if (state.op === 'upsert') {
+        const keys = (state.onConflict ?? 'id').split(',');
+        const fresh = [];
+        for (const p of Array.isArray(state.payload) ? state.payload : [state.payload]) {
+          if (rows.some((r) => keys.every((k) => r[k] === p[k]))) continue; // ignoreDuplicates
+          const row = { id: p.id ?? `00000000-0000-4000-8000-${String(++counter).padStart(12, '0')}`, ...p };
+          rows.push(row);
+          fresh.push(row);
+        }
+        writes.push({ op: 'upsert', table: name, rows: fresh.map((r) => ({ ...r })) });
+        return { data: fresh, error: null };
       }
       if (state.op === 'update') {
         const hit = rows.filter(match);
@@ -41,6 +53,7 @@ export function createFakeDb(seed = {}) {
       select() { return api; },
       insert(p) { state.op = 'insert'; state.payload = p; return api; },
       update(p) { state.op = 'update'; state.payload = p; return api; },
+      upsert(p, opts) { state.op = 'upsert'; state.payload = p; state.onConflict = opts?.onConflict ?? null; return api; },
       delete() { state.op = 'delete'; return api; },
       eq(c, v) { state.filters.push([c, v]); return api; },
       in() { return api; },

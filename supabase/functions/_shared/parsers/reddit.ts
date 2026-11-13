@@ -5,6 +5,7 @@
 // Either way we capture the post body + top comments so enrich has real text.
 
 import { ParsedContent, wordCount } from './types.ts';
+import { safeFetch } from '../net.ts';
 
 // Reddit requires a unique, descriptive User-Agent — generic/browser UAs get throttled.
 const REDDIT_UA = 'web:qlip:1.0 (by /u/qlip)';
@@ -23,7 +24,7 @@ function stripHtmlEntities(s: string): string {
 
 /** Post id + subreddit from any Reddit permalink. */
 function parsePermalink(url: string): { sub: string; id: string } | null {
-  const m = new URL(url).pathname.match(/\/r\/([^/]+)\/comments\/([a-z0-9]+)/i);
+  const m = new URL(url).pathname.match(/\/r\/([\w-]+)\/comments\/([a-z0-9]+)/i);
   return m ? { sub: m[1], id: m[2] } : null;
 }
 
@@ -65,14 +66,15 @@ async function fetchListing(url: string, keys: RedditKeys): Promise<any> {
 
   // Public fallback — works from residential IPs, usually 403s from cloud.
   const u = new URL(url);
+  // The URL is user-supplied: only ever send this request to Reddit itself.
+  if (!/^(?:[\w-]+\.)*reddit\.com$/i.test(u.hostname)) throw new Error('Reddit: not a reddit.com URL');
   u.hash = '';
   u.search = '';
   const jsonUrl = `${u.origin}${u.pathname.replace(/\/+$/, '')}.json?raw_json=1&limit=10`;
-  const res = await fetch(jsonUrl, {
+  const res = await safeFetch(jsonUrl, {
     headers: { 'User-Agent': REDDIT_UA, Accept: 'application/json' },
     signal: AbortSignal.timeout(15_000),
-    redirect: 'follow',
-  });
+  }, { maxBytes: 5 * 1024 * 1024 });
   if (!res.ok) throw new Error(`Reddit JSON HTTP ${res.status}`);
   return await res.json();
 }
