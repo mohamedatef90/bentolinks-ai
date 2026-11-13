@@ -27,6 +27,7 @@
 import { wordCount } from './types.ts';
 import type { ParsedContent } from './types.ts';
 import { transcribeVideoBytes } from '../gemini.ts';
+import { safeFetch } from '../net.ts';
 
 export interface FacebookKeys {
   apifyToken: string | null;
@@ -134,7 +135,7 @@ function videoUrlFrom(post: any): string | null {
 /** Download a short clip (size-capped) and have Gemini transcribe the audio. */
 async function transcribeVideo(videoUrl: string, geminiKey: string): Promise<string | null> {
   try {
-    const res = await fetch(videoUrl, { signal: AbortSignal.timeout(30_000), redirect: 'follow' });
+    const res = await safeFetch(videoUrl, { signal: AbortSignal.timeout(30_000) }, { maxBytes: MAX_VIDEO_BYTES });
     if (!res.ok) { await res.body?.cancel(); return null; }
     const len = Number(res.headers.get('content-length') ?? 0);
     if (len && len > MAX_VIDEO_BYTES) { await res.body?.cancel(); return null; }
@@ -152,7 +153,7 @@ async function transcribeVideo(videoUrl: string, geminiKey: string): Promise<str
 /** Fetch a WebVTT/SRT subtitle file and strip it down to plain caption text. */
 async function fetchCaptions(captionsUrl: string): Promise<string | null> {
   try {
-    const res = await fetch(captionsUrl, { signal: AbortSignal.timeout(15_000) });
+    const res = await safeFetch(captionsUrl, { signal: AbortSignal.timeout(15_000) }, { maxBytes: 2 * 1024 * 1024 });
     if (!res.ok) { await res.body?.cancel(); return null; }
     const raw = await res.text();
     const lines = raw.split(/\r?\n/).filter((l) => {

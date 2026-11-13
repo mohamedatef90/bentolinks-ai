@@ -1,3 +1,5 @@
+import { checkHostname } from './net.ts';
+
 const TRACKING_PARAMS = new Set([
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id',
   'fbclid', 'gclid', 'msclkid', 'mc_cid', 'mc_eid', 'igshid', 'igsh',
@@ -43,12 +45,15 @@ export function extractYouTubeId(u: URL): string | null {
   return null;
 }
 
+// Anchored to the host so `https://evil.example/?reddit.com/r/x/comments/y` is not a Reddit post.
+export const REDDIT_POST_RE = /^https?:\/\/(?:[\w-]+\.)*reddit\.com\/r\/[^/]+\/comments\//i;
+
 const DETECTION_RULES: Array<[RegExp, SourceType]> = [
   [/(?:youtube\.com\/(?:watch|shorts\/|live\/)|youtu\.be\/)/i, 'youtube'],
   [/instagram\.com\/(?:reel|reels|p|tv|share\/(?:reel|p))\//i, 'reel'],
   [/(?:tiktok\.com\/.+\/(?:video|photo)\/|(?:vm|vt)\.tiktok\.com\/)/i, 'reel'],
   [/(twitter|x)\.com\/[^/]+\/status\//i, 'tweet'],
-  [/reddit\.com\/r\/[^/]+\/comments\//i, 'reddit'],
+  [REDDIT_POST_RE, 'reddit'],
   [/\.pdf(\?|#|$)/i, 'pdf'],
 ];
 
@@ -60,7 +65,7 @@ const SOCIAL_CONTENT_RULES = [
   /instagram\.com\/(reel|reels|p|tv|share\/(reel|p))\//i,
   /tiktok\.com\/.+\/(video|photo)\/|(?:vm|vt)\.tiktok\.com\//i,
   /(?:twitter|x)\.com\/[^/]+\/status\//i,
-  /reddit\.com\/r\/[^/]+\/comments\//i,
+  REDDIT_POST_RE,
   /threads\.net\/@[^/]+\/post\//i,
   /linkedin\.com\/(?:posts|pulse|feed\/update)\//i,
   /(?:facebook\.com|fb\.watch|fb\.com)\/(?:share\/(?:r|p|v|s)?\/?|reel\/|watch\/?|.*\/posts\/|.*\/videos\/|photo|permalink\.php|story\.php)/i,
@@ -120,10 +125,12 @@ export function detectSourceType(url: string): SourceType {
   return 'article';
 }
 
-const PRIVATE_HOST_RE =
-  /^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)|\.(local|internal)$/i;
-
-/** Basic SSRF guard: http(s) only, no private/loopback hosts, length cap. */
+/**
+ * Cheap synchronous pre-check at capture time: http(s) only, length cap, and no
+ * local names or non-public IP literals (IPv4 and IPv6, including CGNAT, link-local,
+ * multicast and reserved ranges). It does NOT resolve DNS: fetching goes through
+ * `safeFetch` (_shared/net.ts), which re-checks the resolved addresses and every redirect.
+ */
 export function validatePublicUrl(raw: string): { ok: true; url: URL } | { ok: false; reason: string } {
   if (raw.length > 2048) return { ok: false, reason: 'URL exceeds 2048 characters' };
   let u: URL;
@@ -135,7 +142,7 @@ export function validatePublicUrl(raw: string): { ok: true; url: URL } | { ok: f
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     return { ok: false, reason: 'Only http/https URLs are accepted' };
   }
-  if (PRIVATE_HOST_RE.test(u.hostname)) {
+  if (!checkHostname(u.hostname).ok) {
     return { ok: false, reason: 'Private or local addresses are not allowed' };
   }
   return { ok: true, url: u };

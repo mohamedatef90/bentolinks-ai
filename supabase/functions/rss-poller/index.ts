@@ -18,6 +18,7 @@ import { canonicalizeUrl, validatePublicUrl } from '../_shared/canonical.ts';
 import { enqueue } from '../_shared/queue.ts';
 import { parseFeed } from '../_shared/feed.ts';
 import { PARSER_UA } from '../_shared/parsers/types.ts';
+import { safeFetch, SsrfError } from '../_shared/net.ts';
 
 const TIME_BUDGET_MS = 100_000;
 const FETCH_TIMEOUT_MS = 20_000;
@@ -60,11 +61,11 @@ async function pollSubscription(db: SupabaseClient, sub: Subscription): Promise<
   if (sub.etag) headers['If-None-Match'] = sub.etag;
   if (sub.last_modified) headers['If-Modified-Since'] = sub.last_modified;
 
-  const res = await fetch(sub.feed_url, {
+  // feed_url is user-supplied (the web app inserts it directly): fetch it safely.
+  const res = await safeFetch(sub.feed_url, {
     headers,
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    redirect: 'follow',
-  });
+  }, { maxBytes: 10 * 1024 * 1024 });
 
   if (res.status === 304) {
     await res.body?.cancel();
@@ -188,7 +189,26 @@ async function markFailure(db: SupabaseClient, sub: Subscription, err: string) {
   }).eq('id', sub.id);
 }
 
-async function pollAllDue(db: SupabaseClient): Promise<{ polled: number; inserted: number; failed: number }> {
+/**
+ * The feed address is not a public web address (or redirects to one). Retrying
+ * cannot help: pause the subscription now and record why, instead of backing off forever.
+ */
+async function markBlocked(db: SupabaseClient, sub: Subscription, err: string) {
+  await db.from('rss_subscriptions').update({
+    last_fetched_at: new Date().toISOString(),
+    error_count: sub.error_count + 1,
+    last_error: `Blocked: ${err}`.slice(0, 1000),
+    is_active: false,
+  }).eq('id', sub.id);
+}
+
+async function recordPollError(db: SupabaseClient, sub: Subscription, e: unknown) {
+  const message = (e as Error).message;
+  if (e instanceof SsrfError) await markBlocked(db, sub, message);
+  else await markFailure(db, sub, message);
+}
+
+export async function pollAllDue(db: SupabaseClient): Promise<{ polled: number; inserted: number; failed: number }> {
   const started = Date.now();
   const { data: subs, error } = await db
     .from('rss_subscriptions')
@@ -207,8 +227,8 @@ async function pollAllDue(db: SupabaseClient): Promise<{ polled: number; inserte
       inserted += r.inserted;
     } catch (e) {
       failed++;
-      console.error(`poll failed for ${sub.feed_url}:`, (e as Error).message);
-      await markFailure(db, sub, (e as Error).message);
+      console.error(`poll failed for subscription ${sub.id}:`, (e as Error).message);
+      await recordPollError(db, sub, e);
     }
   }
   return { polled, inserted, failed };
@@ -257,7 +277,7 @@ Deno.serve(async (req: Request) => {
     const r = await pollSubscription(db, sub as Subscription);
     return corsResponse({ ok: true, ...r });
   } catch (e) {
-    await markFailure(db, sub as Subscription, (e as Error).message);
+    await recordPollError(db, sub as Subscription, e);
     return corsResponse({ error: 'POLL_FAILED', message: (e as Error).message }, 502);
   }
 });

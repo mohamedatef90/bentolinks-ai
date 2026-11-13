@@ -7,6 +7,7 @@
 
 import { parseHTML } from 'npm:linkedom@0.18';
 import { transcribeVideoBytes } from '../gemini.ts';
+import { safeFetch } from '../net.ts';
 import { ParsedContent, PARSER_UA, wordCount } from './types.ts';
 
 export interface ScraperKeys {
@@ -20,7 +21,7 @@ const MAX_VIDEO_BYTES = 20 * 1024 * 1024; // 20MB cap — keeps Gemini upload in
 /** Download a short video (size-capped) and have Gemini transcribe what's said. */
 async function transcribeVideo(videoUrl: string, geminiKey: string): Promise<string | null> {
   try {
-    const res = await fetch(videoUrl, { signal: AbortSignal.timeout(30_000), redirect: 'follow' });
+    const res = await safeFetch(videoUrl, { signal: AbortSignal.timeout(30_000) }, { maxBytes: MAX_VIDEO_BYTES });
     if (!res.ok) { await res.body?.cancel(); return null; }
     const len = Number(res.headers.get('content-length') ?? 0);
     if (len && len > MAX_VIDEO_BYTES) { await res.body?.cancel(); return null; }

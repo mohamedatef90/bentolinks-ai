@@ -1,5 +1,6 @@
 import { parseHTML } from 'npm:linkedom@0.18';
 import { Readability } from 'npm:@mozilla/readability@0.5';
+import { safeFetch } from '../net.ts';
 
 export interface ParsedArticle {
   title: string | null;
@@ -12,6 +13,8 @@ export interface ParsedArticle {
   content_text: string | null;
   word_count: number | null;
 }
+
+const MAX_HTML_BYTES = 10 * 1024 * 1024;
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 Qlip/1.0';
@@ -26,11 +29,10 @@ function meta(document: any, ...selectors: string[]): string | null {
 }
 
 export async function parseArticle(url: string): Promise<ParsedArticle> {
-  const res = await fetch(url, {
+  const res = await safeFetch(url, {
     headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
     signal: AbortSignal.timeout(15_000),
-    redirect: 'follow',
-  });
+  }, { maxBytes: MAX_HTML_BYTES });
   if (!res.ok) throw new Error(`Fetch failed: HTTP ${res.status}`);
 
   const contentType = res.headers.get('content-type') ?? '';

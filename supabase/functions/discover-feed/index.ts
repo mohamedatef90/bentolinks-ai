@@ -9,6 +9,7 @@ import { parseHTML } from 'npm:linkedom@0.18';
 import { corsHeaders, corsResponse } from '../_shared/cors.ts';
 import { getUser } from '../_shared/db.ts';
 import { validatePublicUrl } from '../_shared/canonical.ts';
+import { safeFetch, SsrfError } from '../_shared/net.ts';
 import { PARSER_UA } from '../_shared/parsers/types.ts';
 import { parseFeed } from '../_shared/feed.ts';
 
@@ -30,14 +31,13 @@ function looksLikeFeedBody(bodyStart: string): boolean {
 }
 
 async function fetchPage(url: string): Promise<{ finalUrl: string; contentType: string; body: string }> {
-  const res = await fetch(url, {
+  const res = await safeFetch(url, {
     headers: {
       'User-Agent': PARSER_UA,
       Accept: 'application/rss+xml, application/atom+xml, text/html, application/xml, */*',
     },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    redirect: 'follow',
-  });
+  }, { maxBytes: 10 * 1024 * 1024 });
   if (!res.ok) {
     await res.body?.cancel();
     throw new Error(`HTTP ${res.status}`);
@@ -83,6 +83,8 @@ Deno.serve(async (req: Request) => {
   try {
     page = await fetchPage(check.url.toString());
   } catch (e) {
+    // A blocked target is a bad request, not an upstream failure.
+    if (e instanceof SsrfError) return corsResponse({ error: 'INVALID_URL', message: e.message }, 400);
     return corsResponse({ error: 'FETCH_FAILED', message: (e as Error).message }, 502);
   }
 

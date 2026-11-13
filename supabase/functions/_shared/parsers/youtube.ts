@@ -4,6 +4,7 @@
 
 import { extractYouTubeId } from '../canonical.ts';
 import { transcribeYouTube } from '../gemini.ts';
+import { safeFetch } from '../net.ts';
 import { ParsedContent, PARSER_UA, wordCount } from './types.ts';
 
 // Public InnerTube key embedded in every youtube.com page — a client id, not a secret.
@@ -122,10 +123,11 @@ async function tryInnertube(videoId: string): Promise<InnertubeResult> {
   const baseUrl = ranked[0]?.baseUrl;
   if (!baseUrl) return out;
 
-  const capRes = await fetch(`${baseUrl}&fmt=json3`, {
+  // baseUrl comes from a YouTube response: treat it as untrusted.
+  const capRes = await safeFetch(`${baseUrl}&fmt=json3`, {
     headers: { 'User-Agent': PARSER_UA },
     signal: AbortSignal.timeout(15_000),
-  });
+  }, { maxBytes: 5 * 1024 * 1024 });
   if (!capRes.ok) {
     await capRes.body?.cancel();
     return out;
