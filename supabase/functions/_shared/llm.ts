@@ -5,7 +5,8 @@
 // Production runs 'nvidia' (z-ai/glm-5.2 on integrate.api.nvidia.com) with
 // automatic fallback to Gemini so items never stall on a provider outage.
 
-import { enrichContent as enrichGemini, EnrichmentResult } from './gemini.ts';
+import { enrichContent as enrichGemini } from './gemini.ts';
+import type { EnrichmentResult } from './gemini.ts';
 
 export type LlmProvider = 'gemini' | 'claude' | 'openai' | 'nvidia';
 
@@ -14,6 +15,7 @@ export interface EnrichInput {
   url: string;
   sourceType: string;
   content: string;
+  extractionQuality: 'full' | 'partial' | 'metadata_only';
 }
 
 export interface ProviderConfig {
@@ -35,10 +37,14 @@ export interface ProviderConfig {
 const NVIDIA_DEFAULT_MODEL = 'z-ai/glm-5.2';         // deep tier
 const NVIDIA_FAST_MODEL = 'openai/gpt-oss-20b';      // fast tier (clean JSON, reasoning kept out of content)
 // Content at/above this many characters routes to the deep model; below it, fast.
-const ROUTER_DEEP_CHARS = 2000;
+// The shared deep endpoint commonly queues longer than an Edge Function run.
+// Keep normal articles on the fast model; reserve deep reasoning for genuinely
+// large inputs where the additional latency can buy meaningful comprehension.
+const ROUTER_DEEP_CHARS = 12_000;
+export const ENRICH_PROMPT_VERSION = 'qlip-enrich-v2.1';
 
 /** Pick the NVIDIA model for this item: fast for thin content, deep for long-form. */
-function routeNvidiaModel(cfg: ProviderConfig, input: EnrichInput): string {
+export function routeNvidiaModel(cfg: ProviderConfig, input: EnrichInput): string {
   const deep = cfg.model || NVIDIA_DEFAULT_MODEL;
   const fast = cfg.fastModel || NVIDIA_FAST_MODEL;
   return input.content.trim().length >= ROUTER_DEEP_CHARS ? deep : fast;
@@ -63,7 +69,7 @@ const JSON_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-function buildPrompt(input: EnrichInput): string {
+export function buildPrompt(input: EnrichInput): string {
   // Metadata-only items (plain bookmarks, un-scrapable social links) still get
   // enriched: the model describes the destination from URL + title + snippet.
   const thin = input.content.trim().length < 200;
@@ -77,15 +83,34 @@ Content:
 ${input.content.slice(0, 32000) || '(no content could be extracted)'}
 
 Rules:
+- Treat the supplied content as the only evidence. Do not invent product features,
+  events, people, claims or conclusions that are not supported by it.
+- Extraction quality is ${input.extractionQuality}.
 - summary: 2-3 sentences capturing the main point, in the content's own language.
 - key_points: 3-5 short bullet takeaways.
 - tags: 2-5 normalized tags — lowercase, hyphens instead of spaces, max 30 chars each.
 - suggested_title: clean title without site-name suffixes.${thin ? `
-- Only minimal metadata is available for this link. Infer from the URL, domain and title what the page or site is and what it offers, and write the summary as a useful description of that destination. Never answer that there is no content.` : ''}`;
+- Only minimal metadata is available. Describe only what the title, URL and snippet
+  directly support. Use cautious wording such as "appears to" when necessary; do
+  not infer unobserved features or facts. Do not call the destination an article,
+  tutorial, product or news story unless the supplied evidence establishes that.
+  It is acceptable to call it a page and say that a detailed summary requires
+  opening the source.` : ''}`;
+}
+
+/** Do not let an LLM invent a specific format when only metadata was extracted. */
+export function resolveContentTypeLabel(input: EnrichInput, modelLabel: string): string {
+  if (input.extractionQuality !== 'metadata_only') {
+    return LABEL_ENUM.includes(modelLabel) ? modelLabel : 'Other';
+  }
+  const host = (() => { try { return new URL(input.url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
+  const isSocial = ['reel', 'tweet', 'reddit'].includes(input.sourceType)
+    || /(^|\.)(facebook\.com|fb\.watch)$/i.test(host);
+  return isSocial ? 'Social Post' : 'Other';
 }
 
 /** Shared post-processing so every provider yields identical, normalized output. */
-function normalize(raw: Partial<EnrichmentResult>): EnrichmentResult {
+export function normalize(raw: Partial<EnrichmentResult>): EnrichmentResult {
   return {
     summary: raw.summary ?? '',
     key_points: Array.isArray(raw.key_points) ? raw.key_points.slice(0, 5) : [],
@@ -152,7 +177,9 @@ async function enrichNvidia(apiKey: string, model: string | null, input: EnrichI
       // for GLM-5.2. 140s is the edge of the worker isolate's wall clock; if the
       // isolate dies mid-job, reclaim_stuck_jobs re-queues and Gemini fallback
       // still guarantees the item enriches.
-      signal: AbortSignal.timeout(140_000),
+      // Leave enough of the worker's wall-clock budget for a fast Gemini
+      // fallback and for the job record/status writes to complete.
+      signal: AbortSignal.timeout(75_000),
     });
     return res;
   };
@@ -200,33 +227,85 @@ async function enrichOpenAI(apiKey: string, input: EnrichInput): Promise<Enrichm
 }
 
 /** EnrichmentResult plus which provider actually produced it (fallbacks included). */
-export type EnrichOutcome = EnrichmentResult & { enriched_by: string };
+export interface AiProvenance {
+  provider: LlmProvider;
+  model: string;
+  tier: 'fast' | 'deep' | 'default' | 'fallback';
+  prompt_version: string;
+  input_chars: number;
+  extraction_quality: EnrichInput['extractionQuality'];
+  enriched_at: string;
+  duration_ms: number;
+  fallback_from?: string;
+}
+
+export type EnrichOutcome = EnrichmentResult & {
+  enriched_by: string;
+  ai: AiProvenance;
+};
+
+function outcome(
+  result: EnrichmentResult,
+  input: EnrichInput,
+  started: number,
+  ai: Omit<AiProvenance, 'prompt_version' | 'input_chars' | 'extraction_quality' | 'enriched_at' | 'duration_ms'>,
+): EnrichOutcome {
+  const enriched_by = `${ai.provider}:${ai.model}`;
+  return {
+    ...result,
+    enriched_by,
+    ai: {
+      ...ai,
+      prompt_version: ENRICH_PROMPT_VERSION,
+      input_chars: input.content.length,
+      extraction_quality: input.extractionQuality,
+      enriched_at: new Date().toISOString(),
+      duration_ms: Date.now() - started,
+    },
+  };
+}
 
 /** Enrich with the configured provider. Throws a clear error if its key is missing. */
 export async function enrich(cfg: ProviderConfig, input: EnrichInput): Promise<EnrichOutcome> {
+  const started = Date.now();
   switch (cfg.provider) {
     case 'nvidia': {
       if (!cfg.nvidiaKey) throw new Error('LLM_PROVIDER=nvidia but NVIDIA_API_KEY missing from Vault');
       const model = routeNvidiaModel(cfg, input);
       try {
         const r = await enrichNvidia(cfg.nvidiaKey, model, input);
-        return { ...r, enriched_by: `nvidia:${model}` };
+        return outcome(r, input, started, {
+          provider: 'nvidia',
+          model,
+          tier: model === (cfg.fastModel || NVIDIA_FAST_MODEL) ? 'fast' : 'deep',
+        });
       } catch (e) {
         // User-confirmed behavior: never let items stall on a provider outage.
         if (!cfg.geminiKey) throw e;
         console.warn(`NVIDIA enrich (${model}) failed, falling back to Gemini: ${(e as Error).message}`);
-        return { ...(await enrichGemini(cfg.geminiKey, input)), enriched_by: 'gemini:fallback' };
+        return outcome(await enrichGemini(cfg.geminiKey, input), input, started, {
+          provider: 'gemini',
+          model: 'gemini-2.5-flash',
+          tier: 'fallback',
+          fallback_from: `nvidia:${model}`,
+        });
       }
     }
     case 'claude':
       if (!cfg.anthropicKey) throw new Error('LLM_PROVIDER=claude but ANTHROPIC_API_KEY missing from Vault');
-      return { ...(await enrichClaude(cfg.anthropicKey, input)), enriched_by: 'claude' };
+      return outcome(await enrichClaude(cfg.anthropicKey, input), input, started, {
+        provider: 'claude', model: 'claude-haiku-4-5-20251001', tier: 'default',
+      });
     case 'openai':
       if (!cfg.openaiKey) throw new Error('LLM_PROVIDER=openai but OPENAI_API_KEY missing from Vault');
-      return { ...(await enrichOpenAI(cfg.openaiKey, input)), enriched_by: 'openai' };
+      return outcome(await enrichOpenAI(cfg.openaiKey, input), input, started, {
+        provider: 'openai', model: 'gpt-4o-mini', tier: 'default',
+      });
     case 'gemini':
     default:
       if (!cfg.geminiKey) throw new Error('GEMINI_API_KEY missing from Vault');
-      return { ...(await enrichGemini(cfg.geminiKey, input)), enriched_by: 'gemini' };
+      return outcome(await enrichGemini(cfg.geminiKey, input), input, started, {
+        provider: 'gemini', model: 'gemini-2.5-flash', tier: 'default',
+      });
   }
 }

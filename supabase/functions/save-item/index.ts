@@ -1,16 +1,23 @@
 import { corsHeaders, corsResponse } from '../_shared/cors.ts';
 import { serviceClient, getUser } from '../_shared/db.ts';
-import { canonicalizeUrl, detectSourceType, validatePublicUrl } from '../_shared/canonical.ts';
+import { canonicalizeUrl, detectSourceType, inferItemKind, validatePublicUrl } from '../_shared/canonical.ts';
 import { enqueue } from '../_shared/queue.ts';
 
 const SAVED_VIA = ['web', 'mobile', 'extension', 'import'] as const;
+const ITEM_KINDS = ['bookmark', 'content'] as const;
+const DESTINATIONS = ['auto', ...ITEM_KINDS] as const;
 
 interface SaveRequest {
   url?: string;
   urls?: string[]; // batch mode (bookmark import), max 100
   folder_id?: string;
   tags?: string[];
+  /** Backwards-compatible explicit destination. Prefer `destination`. */
+  kind?: (typeof ITEM_KINDS)[number];
+  /** Auto classifies domain→Bookmarks and articles/social/files→Reading. */
+  destination?: (typeof DESTINATIONS)[number];
   saved_via?: (typeof SAVED_VIA)[number]; // client origin; defaults to 'web'
+  note?: string;
   retry_item_id?: string; // re-enqueue the parse pipeline for an existing item
 }
 
@@ -58,7 +65,25 @@ Deno.serve(async (req: Request) => {
   const savedVia = SAVED_VIA.includes(body.saved_via as (typeof SAVED_VIA)[number])
     ? body.saved_via!
     : isBatch ? 'import' : 'web';
+  const requestedDestination = DESTINATIONS.includes(body.destination as (typeof DESTINATIONS)[number])
+    ? body.destination!
+    : ITEM_KINDS.includes(body.kind as (typeof ITEM_KINDS)[number])
+      ? body.kind!
+      : isBatch ? 'bookmark' : 'auto';
+  const captureNote = typeof body.note === 'string' ? body.note.trim().slice(0, 1000) : '';
   const results: Array<Record<string, unknown>> = [];
+
+  let folderId: string | null = null;
+  if (body.folder_id) {
+    const { data: folder } = await db
+      .from('folders')
+      .select('id')
+      .eq('id', body.folder_id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (!folder) return corsResponse({ error: 'INVALID_FOLDER', message: 'Folder not found' }, 400);
+    folderId = folder.id;
+  }
 
   for (const raw of urls) {
     const check = validatePublicUrl(raw.trim());
@@ -69,6 +94,12 @@ Deno.serve(async (req: Request) => {
 
     const canonical = canonicalizeUrl(raw.trim());
     const sourceType = detectSourceType(raw.trim());
+    // Stamp the routing decision at capture time. Parsing/enrichment may add a
+    // large body later, but that must never turn a domain home page into an
+    // article. Explicit user choice always wins over automatic inference.
+    const kindOverride = requestedDestination === 'auto'
+      ? inferItemKind(raw.trim(), sourceType)
+      : requestedDestination;
 
     // Duplicate detection
     const { data: existing } = await db
@@ -79,6 +110,16 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (existing) {
+      await db.from('content_items').update({ kind_override: kindOverride }).eq('id', existing.id);
+      if (folderId) {
+        await db.from('item_folders').delete().eq('item_id', existing.id);
+        await db.from('item_folders').insert({
+          item_id: existing.id,
+          folder_id: folderId,
+          user_id: user.id,
+          assignment_source: 'user',
+        });
+      }
       results.push({ ...existing, duplicate: true });
       continue;
     }
@@ -90,9 +131,11 @@ Deno.serve(async (req: Request) => {
         url: raw.trim(),
         canonical_url: canonical,
         source_type: sourceType,
+        kind_override: kindOverride,
         status: 'pending',
         saved_via: savedVia,
         tags: (body.tags ?? []).slice(0, 10),
+        raw_metadata: captureNote ? { capture_note: captureNote } : null,
       })
       .select('id, url, title, status, source_type, created_at')
       .single();
@@ -102,11 +145,12 @@ Deno.serve(async (req: Request) => {
       continue;
     }
 
-    if (body.folder_id) {
+    if (folderId) {
       await db.from('item_folders').insert({
         item_id: item.id,
-        folder_id: body.folder_id,
+        folder_id: folderId,
         user_id: user.id,
+        assignment_source: 'user',
       });
     }
 
