@@ -25,3 +25,18 @@ backups/
 *.njsproj
 *.sln
 *.sw?
+
+# Xcode per-user UI and scheme state
+xcuserdata/
+*.xcuserstate
+
+# Local-only tooling and Supabase CLI state
+supabase/.temp/
+.claude/settings.local.json
+.claude/worktrees/
+.codex/
+
+# Environment files (keep the template)
+.env
+.env.*
+!.env.example
