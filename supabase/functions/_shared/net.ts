@@ -144,6 +144,10 @@ export function classifyIp(raw: string): { public: boolean; reason?: string } {
   if (w.slice(0, 6).every((x) => x === 0)) return { public: false, reason: 'unspecified-or-loopback' };
   // IPv4-mapped ::ffff:a.b.c.d -> judge the embedded IPv4 address.
   if (w.slice(0, 5).every((x) => x === 0) && w[5] === 0xffff) return classifyV4(v4FromWords(w[6], w[7]));
+  // IPv4-translated ::ffff:0:a.b.c.d (RFC 2765, ::ffff:0:0/96) -> judge the embedded IPv4 address.
+  if (w.slice(0, 4).every((x) => x === 0) && w[4] === 0xffff && w[5] === 0) return classifyV4(v4FromWords(w[6], w[7]));
+  // The rest of ::/8 is reserved space, never a public host.
+  if ((w[0] & 0xff00) === 0) return { public: false, reason: 'reserved' };
   if (w[0] === 0x0064 && w[1] === 0xff9b) return { public: false, reason: 'nat64' };
   if (w[0] === 0x0100 && w[1] === 0 && w[2] === 0 && w[3] === 0) return { public: false, reason: 'discard' };
   if ((w[0] & 0xfe00) === 0xfc00) return { public: false, reason: 'unique-local' };
@@ -187,16 +191,32 @@ export function checkHostname(hostname: string): { ok: true } | { ok: false; rea
 
 // ---- DNS resolution ---------------------------------------------------------------
 
-export type Resolver = (hostname: string, type: 'A' | 'AAAA') => Promise<string[]>;
+export type Resolver = (hostname: string, type: 'A' | 'AAAA', signal?: AbortSignal) => Promise<string[]>;
 
-const defaultResolver: Resolver = (hostname, type) => {
+/** Each DNS lookup gets this long before the request is refused (fail closed). */
+export const DNS_TIMEOUT_MS = 5_000;
+
+const defaultResolver: Resolver = (hostname, type, signal) => {
   // deno-lint-ignore no-explicit-any
   const deno = (globalThis as any).Deno;
   if (!deno || typeof deno.resolveDns !== 'function') {
     return Promise.reject(new Error('Deno.resolveDns is not available'));
   }
-  return deno.resolveDns(hostname, type);
+  return deno.resolveDns(hostname, type, { signal });
 };
+
+/** Run one lookup with a deadline. A resolver that never answers cannot stall the caller. */
+function resolveWithTimeout(resolve: Resolver, host: string, type: 'A' | 'AAAA', timeoutMs: number): Promise<string[]> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`DNS lookup timed out after ${timeoutMs} ms`));
+    }, timeoutMs);
+  });
+  return Promise.race([resolve(host, type, controller.signal), deadline]).finally(() => clearTimeout(timer));
+}
 
 function isNoRecords(err: unknown): boolean {
   const e = err as { name?: string; message?: string } | null;
@@ -209,8 +229,11 @@ function log(event: 'ssrf_block' | 'ssrf_resolver_error', fields: Record<string,
 }
 
 /** Resolve A and AAAA. Fails closed: any unexpected resolver error, or no addresses at all, throws. */
-async function resolveAll(host: string, resolve: Resolver): Promise<string[]> {
-  const settled = await Promise.allSettled([resolve(host, 'A'), resolve(host, 'AAAA')]);
+async function resolveAll(host: string, resolve: Resolver, timeoutMs: number): Promise<string[]> {
+  const settled = await Promise.allSettled([
+    resolveWithTimeout(resolve, host, 'A', timeoutMs),
+    resolveWithTimeout(resolve, host, 'AAAA', timeoutMs),
+  ]);
   const addresses: string[] = [];
   const hard: string[] = [];
   for (const r of settled) {
@@ -233,7 +256,7 @@ function block(reason: string, host: string, hop: number, message: string): neve
 }
 
 /** Validate a single URL (scheme, userinfo, port, host, resolved addresses). Throws SsrfError or DnsResolutionError. */
-export async function assertSafeUrl(url: URL, resolve: Resolver = defaultResolver, hop = 0): Promise<void> {
+export async function assertSafeUrl(url: URL, resolve: Resolver = defaultResolver, hop = 0, dnsTimeoutMs = DNS_TIMEOUT_MS): Promise<void> {
   const host = url.hostname;
   if (url.protocol !== 'http:' && url.protocol !== 'https:') block('scheme', host, hop, 'Only http/https URLs are allowed');
   if (url.username || url.password) block('userinfo', host, hop, 'URLs with credentials are not allowed');
@@ -242,7 +265,7 @@ export async function assertSafeUrl(url: URL, resolve: Resolver = defaultResolve
   if (!named.ok) block(named.reason, host, hop, 'Private or local addresses are not allowed');
   if (isIpLiteral(host)) return; // already classified above
 
-  const addresses = await resolveAll(host.toLowerCase().replace(/\.$/, ''), resolve);
+  const addresses = await resolveAll(host.toLowerCase().replace(/\.$/, ''), resolve, dnsTimeoutMs);
   for (const address of addresses) {
     const c = classifyIp(address);
     if (!c.public) block(`resolved-${c.reason ?? 'non-public'}`, host, hop, 'The host resolves to a private or local address');
@@ -256,6 +279,8 @@ export interface SafeFetchOptions {
   maxRedirects?: number;
   /** Response body cap in bytes (default 15 MB). */
   maxBytes?: number;
+  /** Per-lookup DNS deadline in ms (default 5000). */
+  dnsTimeoutMs?: number;
   /** Test seams. */
   resolve?: Resolver;
   fetch?: typeof fetch;
@@ -311,7 +336,7 @@ export async function safeFetch(input: string | URL, init: RequestInit = {}, opt
   const headers = new Headers(init.headers);
 
   for (let hop = 0; hop <= maxRedirects; hop++) {
-    await assertSafeUrl(current, resolve, hop);
+    await assertSafeUrl(current, resolve, hop, opts.dnsTimeoutMs ?? DNS_TIMEOUT_MS);
     const res = await doFetch(current.toString(), { ...init, method, headers, redirect: 'manual' });
 
     const location = res.headers.get('location');

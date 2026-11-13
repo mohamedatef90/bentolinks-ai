@@ -58,6 +58,31 @@ test('IPv6: IPv4-mapped addresses are judged by the embedded IPv4 address', () =
   assert.equal(isPublicIp('::ffff:808:808'), true);
 });
 
+test('IPv6: IPv4-translated ::ffff:0:a.b.c.d is judged by the embedded IPv4 address', () => {
+  for (const ip of ['::ffff:0:127.0.0.1', '::ffff:0:7f00:1', '::ffff:0:10.0.0.1', '::ffff:0:169.254.169.254', '::ffff:0:192.168.1.1',
+    '::ffff:0:100.64.0.1', '0:0:0:0:ffff:0:a00:1', '[::ffff:0:7f00:1]']) {
+    assert.equal(isPublicIp(ip), false, ip);
+  }
+  assert.equal(isPublicIp('::ffff:0:8.8.8.8'), true);
+  assert.equal(isPublicIp('::ffff:0:808:808'), true);
+  // the mapped form still behaves as before
+  assert.equal(isPublicIp('::ffff:7f00:1'), false);
+  assert.equal(isPublicIp('::ffff:808:808'), true);
+});
+
+test('IPv6: the rest of the reserved ::/8 space is not public', () => {
+  for (const ip of ['0:1::1', '::1:0:0:0:1', '::ffff:1:0:0', '0:ffff::1', 'ff:0:0:0:0:0:0:1']) {
+    assert.equal(isPublicIp(ip), false, ip);
+  }
+});
+
+test('a hostname that resolves to an IPv4-translated private address is rejected before any request', async () => {
+  const resolve = resolverFor({ 'sneaky.example': { AAAA: ['::ffff:0:7f00:1'] } });
+  const doFetch = fetchStub(() => ok());
+  await assert.rejects(() => safeFetch('https://sneaky.example/', {}, { resolve, fetch: doFetch }), SsrfError);
+  assert.equal(doFetch.calls.length, 0);
+});
+
 test('IPv6: NAT64, IPv4-compatible, 6to4, Teredo and documentation ranges', () => {
   assert.equal(isPublicIp('64:ff9b::1.2.3.4'), false);
   assert.equal(isPublicIp('64:ff9b::808:808'), false);
@@ -281,6 +306,28 @@ test('fail closed: a resolver error blocks the request and logs ssrf_resolver_er
   const event = JSON.parse(err.warnings[0]);
   assert.equal(event.event, 'ssrf_resolver_error');
   assert.equal(event.host, 'down.example');
+});
+
+test('fail closed: a resolver that never answers times out, aborts the lookup, and nothing is sent', async () => {
+  const signals = [];
+  const resolve = (host, type, signal) => { signals.push(signal); return new Promise(() => {}); }; // never settles
+  const doFetch = fetchStub(() => ok());
+  const started = Date.now();
+  const err = await captureWarnings(() => safeFetch('https://hang.example/', {}, { resolve, fetch: doFetch, dnsTimeoutMs: 60 })).catch((e) => e);
+  assert.ok(err instanceof DnsResolutionError);
+  assert.ok(Date.now() - started < 1000, 'must not wait on a hung resolver');
+  assert.equal(doFetch.calls.length, 0);
+  assert.equal(signals.length, 2); // A and AAAA
+  assert.ok(signals.every((sig) => sig.aborted), 'the lookups are aborted');
+  const event = JSON.parse(err.warnings[0]);
+  assert.equal(event.event, 'ssrf_resolver_error');
+  assert.match(event.error, /timed out/);
+});
+
+test('a lookup that answers within the deadline is unaffected by the timeout', async () => {
+  const resolve = async (host, type) => { await new Promise((r) => setTimeout(r, 20)); if (type === 'A') return [PUBLIC]; throw Object.assign(new Error('no records found'), { name: 'NotFound' }); };
+  const res = await safeFetch('https://slow.example/', {}, { resolve, fetch: fetchStub(() => ok('fine')), dnsTimeoutMs: 500 });
+  assert.equal(await res.text(), 'fine');
 });
 
 test('fail closed: with no resolver available at all the request is not sent', async () => {
