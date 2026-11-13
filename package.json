@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "audit:ai": "node scripts/ai-audit-report.mjs",
+    "audit:ai:corpus": "node scripts/ai-audit-report.mjs --validate-corpus",
+    "test:ai": "node --test tests/ai-contract.test.mjs",
+    "test:routing": "node --test tests/link-routing.test.mjs tests/ai-category.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.91.0",

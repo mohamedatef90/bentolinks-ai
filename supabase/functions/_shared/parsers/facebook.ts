@@ -3,7 +3,14 @@
 // (share/... URLs return HTTP 400), so real content requires the paid Apify
 // actor (APIFY_TOKEN in Vault).
 //
-// The actor returns TWO different shapes depending on the URL:
+// The actor has returned several shapes over time, depending on the URL and
+// actor version. In particular, the current dataset response uses `text`,
+// `author`, `media`, and `topLevelUrl`, while older responses use `message`,
+// `owner`, `attachments`, and `facebookUrl`. Keep both forms supported: a
+// successful Apify request with an unrecognised schema is worse than a visible
+// parser failure because it quietly creates an empty, apparently-ready post.
+//
+// The older actor responses have TWO main shapes depending on the URL:
 //   - POST shape  (share/p, /posts/…): a `message` caption + pageName + attachments.
 //   - VIDEO shape (share/v, /reel/…, fb.watch): a video-player object with NO
 //     `message` — instead `videoDeliveryLegacyFields.browser_native_*_url` (a
@@ -17,7 +24,8 @@
 //
 // Without APIFY_TOKEN this throws and the worker degrades to a metadata stub.
 
-import { ParsedContent, wordCount } from './types.ts';
+import { wordCount } from './types.ts';
+import type { ParsedContent } from './types.ts';
 import { transcribeVideoBytes } from '../gemini.ts';
 
 export interface FacebookKeys {
@@ -73,6 +81,39 @@ function captionText(message: unknown): string | null {
     return s;
   }
   return null;
+}
+
+/** Return a non-empty string URL from a scalar or the common Apify URL shapes. */
+function urlText(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() || null;
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Record<string, unknown>;
+  for (const key of ['uri', 'url', 'src', 'source']) {
+    const url = candidate[key];
+    if (typeof url === 'string' && url.trim()) return url.trim();
+  }
+  return null;
+}
+
+function firstUrl(...values: unknown[]): string | null {
+  for (const value of values) {
+    const url = urlText(value);
+    if (url) return url;
+  }
+  return null;
+}
+
+function publishedDate(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  const numeric = typeof value === 'number'
+    ? value
+    : (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value.trim())
+        ? Number(value)
+        : null);
+  const date = numeric == null
+    ? new Date(String(value))
+    : new Date(numeric < 10_000_000_000 ? numeric * 1000 : numeric);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 /** Pull the best direct video URL out of either response shape. */
@@ -158,7 +199,14 @@ export async function parseFacebook(url: string, keys: FacebookKeys): Promise<Pa
   if (!post) throw new Error('Apify returned no Facebook post');
 
   // Caption (post shape). May be absent for pure-video reels.
-  const caption = captionText(post.message) ?? captionText(post.translated_message_for_viewer);
+  const caption =
+    captionText(post.message) ??
+    captionText(post.translated_message_for_viewer) ??
+    captionText(post.text) ??
+    captionText(post.caption) ??
+    captionText(post.description) ??
+    captionText(post.postText) ??
+    captionText(post.story);
 
   // Video handling (video shape): subtitles first (exact + cheap), else Gemini
   // transcription of the spoken audio — same treatment as Instagram/TikTok reels.
@@ -177,18 +225,27 @@ export async function parseFacebook(url: string, keys: FacebookKeys): Promise<Pa
   const content = mergeCaptionAndTranscript(caption, transcript);
 
   const author: string | null =
-    post.owner?.name ?? (post.pageName && post.pageName !== 'reel' ? post.pageName : null);
-
-  const sfvc = post.short_form_video_context ?? {};
-  const thumbnail: string | null =
-    post?.preferred_thumbnail?.image?.uri ??
-    sfvc?.video?.first_frame_thumbnail ??
-    post?.attachments?.[0]?.media?.thumbnailImage?.uri ??
-    post?.attachments?.[0]?.media?.image?.uri ??
+    post.owner?.name ??
+    post.author?.name ??
+    post.pageName ??
+    post.page_name ??
+    post.user?.name ??
     null;
 
-  const ts = post.publish_time ?? post.creation_time;
-  const publishedAt = ts ? new Date(Number(ts) * 1000).toISOString() : null;
+  const sfvc = post.short_form_video_context ?? {};
+  const firstMedia = Array.isArray(post.media) ? post.media[0] : null;
+  const thumbnail = firstUrl(
+    post?.preferred_thumbnail?.image,
+    sfvc?.video?.first_frame_thumbnail,
+    post?.attachments?.[0]?.media?.thumbnailImage,
+    post?.attachments?.[0]?.media?.image,
+    firstMedia?.thumbnail,
+    firstMedia?.photo_image,
+    firstMedia?.image,
+    post?.image,
+  );
+
+  const publishedAt = publishedDate(post.publish_time ?? post.creation_time ?? post.time ?? post.timestamp);
 
   const durationSeconds = post.playable_duration_in_ms
     ? Math.round(Number(post.playable_duration_in_ms) / 1000)
@@ -207,6 +264,9 @@ export async function parseFacebook(url: string, keys: FacebookKeys): Promise<Pa
         ? `Facebook ${isVideo ? 'video' : 'post'} by ${author}`
         : `Facebook ${isVideo ? 'video' : 'post'}`);
 
+  const hasText = !!content;
+  const hasVisual = !!thumbnail || !!videoUrl;
+
   return {
     title,
     description: (caption ?? transcript)?.slice(0, 300) ?? null,
@@ -222,11 +282,19 @@ export async function parseFacebook(url: string, keys: FacebookKeys): Promise<Pa
       scraper: 'apify',
       fb_page: author,
       fb_post_id: post.post_id ?? post.facebookId ?? post.videoId ?? null,
-      shareable_url: sfvc?.shareable_url ?? post.facebookUrl ?? post.permalink_url ?? url,
+      shareable_url: sfvc?.shareable_url ?? post.topLevelUrl ?? post.facebookUrl ?? post.url ?? post.permalink_url ?? post.inputUrl ?? url,
       is_video: isVideo,
       video_url: videoUrl,
       transcribed: transcriptSource === 'gemini',
       transcript_source: transcriptSource,
+      // Used by the worker to distinguish a short but genuine Facebook post
+      // from an actor response that only identifies the page. The latter must
+      // be shown as degraded, never as a complete AI analysis.
+      facebook_extraction: {
+        has_text: hasText,
+        has_visual: hasVisual,
+        actor_url: post.topLevelUrl ?? post.facebookUrl ?? post.url ?? post.inputUrl ?? null,
+      },
     },
   };
 }

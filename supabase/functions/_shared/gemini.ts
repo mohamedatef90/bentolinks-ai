@@ -83,7 +83,13 @@ async function callGemini(
 
 export async function enrichContent(
   apiKey: string,
-  input: { title: string | null; url: string; sourceType: string; content: string },
+  input: {
+    title: string | null;
+    url: string;
+    sourceType: string;
+    content: string;
+    extractionQuality?: 'full' | 'partial' | 'metadata_only';
+  },
 ): Promise<EnrichmentResult> {
   // Mirrors llm.ts: metadata-only items still get a useful AI title + summary.
   const thin = input.content.trim().length < 200;
@@ -97,12 +103,18 @@ Content:
 ${input.content.slice(0, 32000) || '(no content could be extracted)'}
 
 Rules:
+- Treat the supplied content as the only evidence. Do not invent product features,
+  events, people, claims or conclusions that are not supported by it.
+- Extraction quality is ${input.extractionQuality ?? (thin ? 'metadata_only' : 'partial')}.
 - summary: 2-3 sentences capturing the main point, in the content's own language.
 - key_points: 3-5 short bullet takeaways.
 - tags: 2-5 normalized tags — lowercase, hyphens instead of spaces, max 30 chars each
   (examples: llm, agents, rag, prompt-engineering, ui-design, frontend, open-source, tutorial).
 - suggested_title: clean title without site-name suffixes.${thin ? `
-- Only minimal metadata is available for this link. Infer from the URL, domain and title what the page or site is and what it offers, and write the summary as a useful description of that destination. Never answer that there is no content.` : ''}`;
+- Only minimal metadata is available. Describe only what the title, URL and snippet
+  directly support. Use cautious wording such as "appears to" when necessary; do
+  not infer unobserved features or facts. It is acceptable to say that a detailed
+  summary requires opening the source.` : ''}`;
 
   const text = await callGemini(apiKey, {
     contents: [{ parts: [{ text: prompt }] }],

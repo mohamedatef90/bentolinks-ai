@@ -8,7 +8,7 @@
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { serviceClient } from '../_shared/db.ts';
-import { canonicalizeUrl, detectSourceType, validatePublicUrl } from '../_shared/canonical.ts';
+import { canonicalizeUrl, detectSourceType, inferItemKind, validatePublicUrl } from '../_shared/canonical.ts';
 import { enqueue } from '../_shared/queue.ts';
 import { resolveApiKey } from '../_shared/apiKeys.ts';
 
@@ -34,6 +34,7 @@ const TOOLS = [
         urls: { type: 'array', items: { type: 'string' }, description: 'Up to 100 URLs to save at once' },
         folder_id: { type: 'string', description: 'Folder (category) id to file the link(s) into' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags' },
+        destination: { type: 'string', enum: ['auto', 'bookmark', 'content'], description: 'Default auto: domains go to Bookmarks; articles, social posts, PDFs and e-books go to Reading.' },
       },
     },
   },
@@ -171,7 +172,14 @@ type Handler = (db: SupabaseClient, userId: string, args: Args) => Promise<unkno
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
 const strArr = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
 
-async function saveOne(db: SupabaseClient, userId: string, rawUrl: string, folderId: string | undefined, tags: string[]) {
+async function saveOne(
+  db: SupabaseClient,
+  userId: string,
+  rawUrl: string,
+  folderId: string | undefined,
+  tags: string[],
+  destination: 'auto' | 'bookmark' | 'content',
+) {
   const check = validatePublicUrl(rawUrl.trim());
   if (!check.ok) return { url: rawUrl, error: check.reason };
   const canonical = canonicalizeUrl(rawUrl.trim());
@@ -183,13 +191,17 @@ async function saveOne(db: SupabaseClient, userId: string, rawUrl: string, folde
     .maybeSingle();
   if (existing) return { ...existing, url: rawUrl, duplicate: true };
 
+  const sourceType = detectSourceType(rawUrl.trim());
+  const kindOverride = destination === 'auto' ? inferItemKind(rawUrl.trim(), sourceType) : destination;
+
   const { data: item, error } = await db
     .from('content_items')
     .insert({
       user_id: userId,
       url: rawUrl.trim(),
       canonical_url: canonical,
-      source_type: detectSourceType(rawUrl.trim()),
+      source_type: sourceType,
+      kind_override: kindOverride,
       status: 'pending',
       saved_via: 'mcp',
       tags: tags.slice(0, 10),
@@ -198,7 +210,14 @@ async function saveOne(db: SupabaseClient, userId: string, rawUrl: string, folde
     .single();
   if (error || !item) return { url: rawUrl, error: error?.message ?? 'insert failed' };
 
-  if (folderId) await db.from('item_folders').insert({ item_id: item.id, folder_id: folderId, user_id: userId });
+  if (folderId) {
+    await db.from('item_folders').insert({
+      item_id: item.id,
+      folder_id: folderId,
+      user_id: userId,
+      assignment_source: 'user',
+    });
+  }
   await enqueue(db, { user_id: userId, item_id: item.id, job_type: 'parse' });
   return { ...item, duplicate: false };
 }
@@ -211,9 +230,16 @@ const HANDLERS: Record<string, Handler> = {
     if (urls.length === 0) throw new Error('Provide `url` or `urls`.');
     if (urls.length > 100) throw new Error('Max 100 URLs per call.');
     const folderId = str(args.folder_id);
+    if (folderId) {
+      const { data: folder } = await db.from('folders').select('id').eq('id', folderId).eq('user_id', userId).maybeSingle();
+      if (!folder) throw new Error('Folder not found.');
+    }
     const tags = strArr(args.tags);
+    const destination = ['bookmark', 'content'].includes(str(args.destination) ?? '')
+      ? str(args.destination) as 'bookmark' | 'content'
+      : 'auto';
     const results = [];
-    for (const u of urls) results.push(await saveOne(db, userId, String(u), folderId, tags));
+    for (const u of urls) results.push(await saveOne(db, userId, String(u), folderId, tags, destination));
     return single && !many.length ? results[0] : { saved: results };
   },
 
@@ -315,7 +341,16 @@ const HANDLERS: Record<string, Handler> = {
     if ('folder_id' in args) {
       await db.from('item_folders').delete().eq('item_id', id).eq('user_id', userId);
       const folderId = str(args.folder_id);
-      if (folderId) await db.from('item_folders').insert({ item_id: id, folder_id: folderId, user_id: userId });
+      if (folderId) {
+        const { data: folder } = await db.from('folders').select('id').eq('id', folderId).eq('user_id', userId).maybeSingle();
+        if (!folder) throw new Error('Folder not found.');
+        await db.from('item_folders').insert({
+          item_id: id,
+          folder_id: folderId,
+          user_id: userId,
+          assignment_source: 'user',
+        });
+      }
     }
     return { id, updated: true };
   },

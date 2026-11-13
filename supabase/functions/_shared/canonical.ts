@@ -7,6 +7,8 @@ const TRACKING_PARAMS = new Set([
 export type SourceType =
   | 'article' | 'youtube' | 'reel' | 'tweet' | 'pdf' | 'rss' | 'reddit' | 'podcast' | 'other';
 
+export type ItemKind = 'bookmark' | 'content';
+
 /** Normalize a URL for duplicate detection. */
 export function canonicalizeUrl(raw: string): string {
   const u = new URL(raw);
@@ -29,10 +31,12 @@ export function canonicalizeUrl(raw: string): string {
 export function extractYouTubeId(u: URL): string | null {
   const host = u.hostname.replace(/^www\./, '');
   if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null;
-  if (host === 'youtube.com' || host === 'm.youtube.com') {
+  if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
     if (u.pathname === '/watch') return u.searchParams.get('v');
     const shorts = u.pathname.match(/^\/shorts\/([\w-]+)/);
     if (shorts) return shorts[1];
+    const live = u.pathname.match(/^\/live\/([\w-]+)/);
+    if (live) return live[1];
     const embed = u.pathname.match(/^\/embed\/([\w-]+)/);
     if (embed) return embed[1];
   }
@@ -40,13 +44,74 @@ export function extractYouTubeId(u: URL): string | null {
 }
 
 const DETECTION_RULES: Array<[RegExp, SourceType]> = [
-  [/youtube\.com\/watch|youtu\.be\/|youtube\.com\/shorts\//i, 'youtube'],
-  [/instagram\.com\/(reel|reels|p|tv)\//i, 'reel'],
-  [/tiktok\.com\/.+\/video\//i, 'reel'],
+  [/(?:youtube\.com\/(?:watch|shorts\/|live\/)|youtu\.be\/)/i, 'youtube'],
+  [/instagram\.com\/(?:reel|reels|p|tv|share\/(?:reel|p))\//i, 'reel'],
+  [/(?:tiktok\.com\/.+\/(?:video|photo)\/|(?:vm|vt)\.tiktok\.com\/)/i, 'reel'],
   [/(twitter|x)\.com\/[^/]+\/status\//i, 'tweet'],
   [/reddit\.com\/r\/[^/]+\/comments\//i, 'reddit'],
   [/\.pdf(\?|#|$)/i, 'pdf'],
 ];
+
+// URLs that unambiguously represent a single social post/video. Profiles,
+// company pages, and social home pages deliberately do not match: those are
+// useful website bookmarks rather than Reading items.
+const SOCIAL_CONTENT_RULES = [
+  /youtube\.com\/(watch|shorts\/|live\/)|youtu\.be\//i,
+  /instagram\.com\/(reel|reels|p|tv|share\/(reel|p))\//i,
+  /tiktok\.com\/.+\/(video|photo)\/|(?:vm|vt)\.tiktok\.com\//i,
+  /(?:twitter|x)\.com\/[^/]+\/status\//i,
+  /reddit\.com\/r\/[^/]+\/comments\//i,
+  /threads\.net\/@[^/]+\/post\//i,
+  /linkedin\.com\/(?:posts|pulse|feed\/update)\//i,
+  /(?:facebook\.com|fb\.watch|fb\.com)\/(?:share\/(?:r|p|v|s)?\/?|reel\/|watch\/?|.*\/posts\/|.*\/videos\/|photo|permalink\.php|story\.php)/i,
+];
+
+const READING_FILE_RE = /\.(?:pdf|epub|mobi|azw3?|fb2|djvu)(?:$|[?#])/i;
+const ARTICLE_HOST_RE = /(^|\.)(?:medium\.com|substack\.com|dev\.to|hashnode\.com|arxiv\.org|researchgate\.net|wikipedia\.org|developer\.mozilla\.org|developer\.apple\.com|docs\.python\.org|doc\.rust-lang\.org)$/i;
+const ARTICLE_ROUTE_RE = /\/(?:article|articles|blog|blogs|post|posts|news|story|stories|read|research|paper|papers|journal|publication|publications|ebook|ebooks|book|books|docs?|documentation|guides?|learn|reference|tutorials?|wiki)\b/i;
+const DATE_ROUTE_RE = /\/20\d{2}\/(?:0?[1-9]|1[0-2])\/(?:0?[1-9]|[12]\d|3[01])(?:\/|$)/;
+const PAGE_FILE_RE = /\.(?:html?|md)(?:$|[?#])/i;
+const WEBSITE_ROUTE_RE = /^\/(?:about|contact|pricing|plans|features?|products?|services?|login|sign-?in|sign-?up|register|account|dashboard|settings?|help|support|careers?|jobs?|privacy|terms|download)\/?$/i;
+
+/**
+ * Decide which user-facing surface owns a saved URL.
+ *
+ * - A website/domain home page is a Bookmark.
+ * - A single social post/video, article/blog post, PDF or e-book is Reading.
+ * - Ambiguous product/tool pages stay Bookmarks until the user explicitly
+ *   chooses Reading. This avoids promoting ordinary sites just because their
+ *   parser later extracts a long body.
+ */
+export function inferItemKind(raw: string, sourceType: SourceType = detectSourceType(raw)): ItemKind {
+  if (sourceType === 'youtube' || sourceType === 'reel' || sourceType === 'tweet' ||
+      sourceType === 'reddit' || sourceType === 'pdf' || sourceType === 'podcast' ||
+      sourceType === 'rss') {
+    return 'content';
+  }
+  if (SOCIAL_CONTENT_RULES.some((rule) => rule.test(raw)) || READING_FILE_RE.test(raw)) {
+    return 'content';
+  }
+
+  let url: URL;
+  try { url = new URL(raw); } catch { return 'bookmark'; }
+  const path = decodeURIComponent(url.pathname).replace(/\/+$/, '') || '/';
+  if (path === '/' || /^\/(?:index|home)(?:\.html?)?$/i.test(path)) return 'bookmark';
+  if (/^\/wiki\/(?:Main_Page|Special:)/i.test(path)) return 'bookmark';
+  if (WEBSITE_ROUTE_RE.test(path)) return 'bookmark';
+
+  const host = url.hostname.replace(/^www\./, '').toLowerCase();
+  if (ARTICLE_HOST_RE.test(host) || ARTICLE_ROUTE_RE.test(path) || DATE_ROUTE_RE.test(path) || PAGE_FILE_RE.test(path)) {
+    return 'content';
+  }
+
+  const segments = path.split('/').filter(Boolean);
+  const leaf = segments.at(-1) ?? '';
+  const slugWords = leaf.split(/[-_]+/).filter((part) => part.length > 1).length;
+  if ((segments.length >= 2 && slugWords >= 3) || slugWords >= 5 || leaf.length >= 48) {
+    return 'content';
+  }
+  return 'bookmark';
+}
 
 export function detectSourceType(url: string): SourceType {
   for (const [re, type] of DETECTION_RULES) {

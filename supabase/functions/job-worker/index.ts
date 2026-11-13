@@ -14,11 +14,36 @@ import { parseReddit } from '../_shared/parsers/reddit.ts';
 import { parseFacebook, isFacebookContentUrl } from '../_shared/parsers/facebook.ts';
 import { ParsedContent } from '../_shared/parsers/types.ts';
 import { embedText } from '../_shared/gemini.ts';
-import { enrich, LlmProvider, ProviderConfig } from '../_shared/llm.ts';
+import { enrich, resolveContentTypeLabel, LlmProvider, ProviderConfig } from '../_shared/llm.ts';
+import { categoryLabel, pickCategoryFolder } from '../_shared/category.ts';
 
-const BATCH_SIZE = 5;
-const TIME_BUDGET_MS = 120_000;
+// Claim one job at a time. Claiming five before a slow model call caused the
+// other four to sit locked until reclaim_stuck_jobs(), producing false timeouts.
+const BATCH_SIZE = 1;
+const TIME_BUDGET_MS = 105_000;
 const MIN_ENRICH_CHARS = 200;
+
+type ExtractionQuality = 'full' | 'partial' | 'metadata_only';
+
+function extractionQuality(content: string, meta: Record<string, unknown>): ExtractionQuality {
+  if (content.trim().length < MIN_ENRICH_CHARS) return 'metadata_only';
+  if (content.trim().length < 2_000 || meta.parse_error) return 'partial';
+  return 'full';
+}
+
+/**
+ * Facebook may return an author envelope for a private, deleted, or otherwise
+ * unavailable post. It is a valid save, but not a complete readable result.
+ * Keep short genuine captions "ready"; only mark the item degraded when we
+ * did not receive any readable source text at all.
+ */
+function isFacebookWithoutReadableText(
+  url: string,
+  parsed: Pick<ParsedContent, 'content_text' | 'description'>,
+): boolean {
+  if (!isFacebookContentUrl(url)) return false;
+  return !Boolean(parsed.content_text?.trim() || parsed.description?.trim());
+}
 
 async function parseBySourceType(
   db: SupabaseClient,
@@ -59,7 +84,7 @@ async function parseBySourceType(
 async function handleParse(db: SupabaseClient, job: Job, geminiKey: string | null) {
   const { data: item, error } = await db
     .from('content_items')
-    .select('id, user_id, url, source_type, title, status')
+    .select('id, user_id, url, source_type, title, status, thumbnail_url, raw_metadata')
     .eq('id', job.item_id!)
     .single();
   if (error || !item) throw new Error(`item ${job.item_id} not found`);
@@ -67,13 +92,18 @@ async function handleParse(db: SupabaseClient, job: Job, geminiKey: string | nul
   await db.from('content_items').update({ status: 'parsing' }).eq('id', item.id);
 
   let parsed: ParsedContent;
+  const parseStarted = Date.now();
+  let fallback: 'article' | 'metadata_stub' | null = null;
+  let primaryError: string | null = null;
   try {
     parsed = await parseBySourceType(db, item, geminiKey);
   } catch (e) {
+    primaryError = (e as Error).message;
     // Specialized endpoints are brittle — degrade to plain OG metadata.
     console.warn(`${item.source_type} parser failed for ${item.url}, falling back to OG:`, (e as Error).message);
     try {
       parsed = await parseArticle(item.url);
+      fallback = 'article';
     } catch (e2) {
       // Page unreachable (bot-blocked, login-walled, dead): keep a metadata
       // stub so the item still gets an AI title + summary from the URL alone
@@ -92,21 +122,48 @@ async function handleParse(db: SupabaseClient, job: Job, geminiKey: string | nul
         word_count: null,
         raw_metadata: { parse_error: (e2 as Error).message },
       };
+      fallback = 'metadata_stub';
     }
   }
 
+  const previousMeta = (item.raw_metadata as Record<string, unknown>) ?? {};
+  const parsedMeta = parsed.raw_metadata ?? {};
+  const parsedContent = parsed.content_text ?? parsed.description ?? '';
+  const quality = extractionQuality(parsedContent, parsedMeta);
+  const facebookWithoutReadableText = isFacebookWithoutReadableText(item.url, parsed);
+  const parserMeta = {
+    name: isFacebookContentUrl(item.url) ? 'facebook' : item.source_type,
+    fallback,
+    primary_error: primaryError,
+    extraction_quality: quality,
+    readable_source_text: !facebookWithoutReadableText,
+    content_chars: parsedContent.length,
+    duration_ms: Date.now() - parseStarted,
+    completed_at: new Date().toISOString(),
+  };
   await db.from('content_items').update({
     title: parsed.title ?? item.title,
     description: parsed.description,
     author: parsed.author,
     site_name: parsed.site_name,
-    thumbnail_url: parsed.thumbnail_url,
+    // A retry that gets rate-limited must not erase the last known thumbnail.
+    thumbnail_url: parsed.thumbnail_url ?? item.thumbnail_url,
     favicon_url: parsed.favicon_url,
     published_at: parsed.published_at,
     content_text: parsed.content_text,
     word_count: parsed.word_count,
     duration_seconds: parsed.duration_seconds ?? null,
-    raw_metadata: parsed.raw_metadata ?? null,
+    // Preserve RSS/import provenance while adding parser output. The old worker
+    // replaced raw_metadata wholesale, losing useful source context.
+    raw_metadata: {
+      ...previousMeta,
+      ...parsedMeta,
+      parser: parserMeta,
+      processing: {
+        ...((previousMeta.processing as Record<string, unknown>) ?? {}),
+        parse: { status: 'done', completed_at: parserMeta.completed_at },
+      },
+    },
     status: 'enriching',
   }).eq('id', item.id);
 
@@ -115,10 +172,69 @@ async function handleParse(db: SupabaseClient, job: Job, geminiKey: string | nul
   await enqueue(db, { user_id: item.user_id, item_id: item.id, job_type: 'enrich' });
 }
 
+/**
+ * Put an automatically-classified Bookmark into the closest existing folder.
+ * If no folder matches the AI topic, create one. A row marked `user` is a hard
+ * stop: once the user moves the item, later retries/enrichment never override
+ * their choice.
+ */
+async function autoCategorizeBookmark(
+  db: SupabaseClient,
+  item: { id: string; user_id: string; item_kind: string | null },
+  topic: string,
+  tags: string[],
+) {
+  if (item.item_kind !== 'bookmark' || !topic.trim()) return;
+
+  const { data: assignments } = await db
+    .from('item_folders')
+    .select('folder_id, assignment_source')
+    .eq('item_id', item.id);
+  if ((assignments ?? []).some((row) => row.assignment_source === 'user')) return;
+
+  const { data: folders, error: foldersError } = await db
+    .from('folders')
+    .select('id, name, position')
+    .eq('user_id', item.user_id)
+    .order('position', { ascending: true });
+  if (foldersError) throw new Error(`folder lookup failed: ${foldersError.message}`);
+
+  let folder = pickCategoryFolder(folders ?? [], topic, tags);
+
+  if (!folder) {
+    const { data: created, error: createError } = await db
+      .from('folders')
+      .insert({
+        user_id: item.user_id,
+        name: categoryLabel(topic),
+        color: 'bg-lime-400',
+        icon: 'fa-folder',
+        position: folders?.length ?? 0,
+      })
+      .select('id, name, position')
+      .single();
+    if (createError || !created) {
+      throw new Error(`AI folder create failed: ${createError?.message ?? 'unknown'}`);
+    }
+    folder = created;
+  }
+
+  await db.from('item_folders').delete().eq('item_id', item.id).eq('assignment_source', 'ai');
+  const { error: assignError } = await db.from('item_folders').insert({
+    item_id: item.id,
+    folder_id: folder.id,
+    user_id: item.user_id,
+    assignment_source: 'ai',
+  });
+  if (assignError && assignError.code !== '23505') {
+    throw new Error(`AI folder assignment failed: ${assignError.message}`);
+  }
+}
+
 async function handleEnrich(db: SupabaseClient, job: Job, llm: ProviderConfig) {
   const { data: item, error } = await db
     .from('content_items')
-    .select('id, user_id, url, title, description, source_type, content_text, tags, raw_metadata')
+    .select('id, user_id, url, title, description, source_type, item_kind, content_text, tags, raw_metadata')
     .eq('id', job.item_id!)
     .single();
   if (error || !item) throw new Error(`item ${job.item_id} not found`);
@@ -129,12 +245,21 @@ async function handleEnrich(db: SupabaseClient, job: Job, llm: ProviderConfig) {
     ? item.content_text
     : [item.description, item.content_text].filter(Boolean).join('\n\n');
 
-  const result = await enrich(llm, {
+  const meta = (item.raw_metadata as Record<string, unknown>) ?? {};
+  const parser = (meta.parser as Record<string, unknown>) ?? {};
+  const quality = (parser.extraction_quality as ExtractionQuality | undefined)
+    ?? extractionQuality(content, meta);
+  const facebookWithoutReadableText = isFacebookContentUrl(item.url) &&
+    parser.readable_source_text === false;
+
+  const enrichInput = {
     title: item.title,
     url: item.url,
     sourceType: item.source_type,
     content,
-  });
+    extractionQuality: quality,
+  };
+  const result = await enrich(llm, enrichInput);
 
   const userTags: string[] = item.tags ?? [];
   const mergedTags = [...new Set([...userTags, ...result.tags])].slice(0, 10);
@@ -150,18 +275,33 @@ async function handleEnrich(db: SupabaseClient, job: Job, llm: ProviderConfig) {
   const hasRealTitle = !!item.title?.trim() && !/^https?:\/\//i.test(item.title.trim());
   const useAiTitle = (!hasRealTitle || isSocial) && !!result.suggested_title;
 
-  await db.from('content_items').update({
+  const { error: updateError } = await db.from('content_items').update({
     title: useAiTitle ? result.suggested_title : (item.title || result.suggested_title),
     summary: result.summary,
     key_points: result.key_points,
     topic: result.topic_category,
     tags: mergedTags,
     language: result.language,
+    content_type_label: resolveContentTypeLabel(enrichInput, result.content_type_label),
     // Which provider actually produced this (e.g. 'nvidia:z-ai/glm-5.2' or
     // 'gemini:fallback') — verifiable via SQL instead of ephemeral logs.
-    raw_metadata: { ...((item.raw_metadata as Record<string, unknown>) ?? {}), enriched_by: result.enriched_by },
-    status: 'ready',
+    raw_metadata: {
+      ...meta,
+      enriched_by: result.enriched_by,
+      ai: result.ai,
+      processing: {
+        ...((meta.processing as Record<string, unknown>) ?? {}),
+        enrich: { status: 'done', completed_at: result.ai.enriched_at },
+      },
+    },
+    // Do not claim that Facebook analysis completed when the source only gave
+    // us a page identity (the common result for private/deleted share links).
+    // The link remains saved, with retry available if it becomes public later.
+    status: facebookWithoutReadableText ? 'degraded' : 'ready',
   }).eq('id', item.id);
+  if (updateError) throw new Error(`enrichment write failed: ${updateError.message}`);
+
+  await autoCategorizeBookmark(db, item, result.topic_category, mergedTags);
 
   await enqueue(db, { user_id: item.user_id, item_id: item.id, job_type: 'embed' });
 }
@@ -169,7 +309,7 @@ async function handleEnrich(db: SupabaseClient, job: Job, llm: ProviderConfig) {
 async function handleEmbed(db: SupabaseClient, job: Job, geminiKey: string) {
   const { data: item, error } = await db
     .from('content_items')
-    .select('id, title, summary, content_text')
+    .select('id, title, summary, content_text, raw_metadata')
     .eq('id', job.item_id!)
     .single();
   if (error || !item) throw new Error(`item ${job.item_id} not found`);
@@ -177,22 +317,65 @@ async function handleEmbed(db: SupabaseClient, job: Job, geminiKey: string) {
   const text = [item.title, item.summary, item.content_text?.slice(0, 2000)]
     .filter(Boolean)
     .join('\n');
-  if (!text.trim()) return; // nothing to embed — leave the column null
+  if (!text.trim()) {
+    const meta = (item.raw_metadata as Record<string, unknown>) ?? {};
+    await db.from('content_items').update({
+      raw_metadata: {
+        ...meta,
+        processing: {
+          ...((meta.processing as Record<string, unknown>) ?? {}),
+          embed: { status: 'skipped', reason: 'empty_input', completed_at: new Date().toISOString() },
+        },
+      },
+    }).eq('id', item.id);
+    return;
+  }
 
   const vector = await embedText(geminiKey, text, 'RETRIEVAL_DOCUMENT');
   const { error: upErr } = await db
     .from('content_items')
-    .update({ embedding: JSON.stringify(vector) })
+    .update({
+      embedding: JSON.stringify(vector),
+      raw_metadata: {
+        ...(((item.raw_metadata as Record<string, unknown>) ?? {})),
+        processing: {
+          ...((((item.raw_metadata as Record<string, unknown>) ?? {}).processing as Record<string, unknown>) ?? {}),
+          embed: { status: 'done', model: 'gemini-embedding-001', completed_at: new Date().toISOString() },
+        },
+      },
+    })
     .eq('id', item.id);
   if (upErr) throw new Error(`embedding write failed: ${upErr.message}`);
 }
 
-async function markItemForFailedJob(db: SupabaseClient, job: Job) {
+async function markItemForFailedJob(db: SupabaseClient, job: Job, message: string) {
   if (!job.item_id) return;
-  // A failed embed must not demote an already-ready item — search degrades to FTS.
-  if (job.job_type === 'embed') return;
-  const status = job.job_type === 'parse' ? 'failed' : 'degraded';
-  await db.from('content_items').update({ status }).eq('id', job.item_id);
+  const { data: item } = await db.from('content_items')
+    .select('raw_metadata')
+    .eq('id', job.item_id)
+    .maybeSingle();
+  const meta = (item?.raw_metadata as Record<string, unknown>) ?? {};
+  const processing = (meta.processing as Record<string, unknown>) ?? {};
+  const update: Record<string, unknown> = {
+    raw_metadata: {
+      ...meta,
+      processing: {
+        ...processing,
+        [job.job_type]: {
+          status: 'failed',
+          error: message.slice(0, 500),
+          attempts: job.attempts,
+          failed_at: new Date().toISOString(),
+        },
+      },
+    },
+  };
+  // A failed embed must not demote an already-ready item — FTS remains usable,
+  // but the explicit embed error lets every client explain semantic-search loss.
+  if (job.job_type !== 'embed') {
+    update.status = job.job_type === 'parse' ? 'failed' : 'degraded';
+  }
+  await db.from('content_items').update(update).eq('id', job.item_id);
 }
 
 async function processJobs(): Promise<{ processed: number; failed: number }> {
@@ -243,8 +426,9 @@ async function processJobs(): Promise<{ processed: number; failed: number }> {
         await completeJob(db, job.id);
         processed++;
       } catch (e) {
-        const terminal = await failJob(db, job, (e as Error).message);
-        if (terminal) await markItemForFailedJob(db, job);
+        const message = (e as Error).message;
+        const terminal = await failJob(db, job, message);
+        if (terminal) await markItemForFailedJob(db, job, message);
         failed++;
         console.error(`job ${job.id} (${job.job_type}) failed:`, (e as Error).message);
       }
