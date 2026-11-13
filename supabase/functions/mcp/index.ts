@@ -11,6 +11,7 @@ import { serviceClient } from '../_shared/db.ts';
 import { canonicalizeUrl, detectSourceType, inferItemKind, validatePublicUrl } from '../_shared/canonical.ts';
 import { enqueue } from '../_shared/queue.ts';
 import { resolveApiKey } from '../_shared/apiKeys.ts';
+import { assertOwnedFolder, assertOwnedItem, INVALID_PARAMS, OwnershipError } from '../_shared/ownership.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -210,19 +211,21 @@ async function saveOne(
     .single();
   if (error || !item) return { url: rawUrl, error: error?.message ?? 'insert failed' };
 
+  let folderWarning: string | undefined;
   if (folderId) {
-    await db.from('item_folders').insert({
+    const { error: folderError } = await db.from('item_folders').insert({
       item_id: item.id,
       folder_id: folderId,
       user_id: userId,
       assignment_source: 'user',
     });
+    if (folderError) folderWarning = 'Saved, but it could not be filed into the folder.';
   }
   await enqueue(db, { user_id: userId, item_id: item.id, job_type: 'parse' });
-  return { ...item, duplicate: false };
+  return { ...item, duplicate: false, ...(folderWarning ? { warning: folderWarning } : {}) };
 }
 
-const HANDLERS: Record<string, Handler> = {
+export const HANDLERS: Record<string, Handler> = {
   async save_link(db, userId, args) {
     const single = str(args.url);
     const many = strArr(args.urls);
@@ -230,10 +233,7 @@ const HANDLERS: Record<string, Handler> = {
     if (urls.length === 0) throw new Error('Provide `url` or `urls`.');
     if (urls.length > 100) throw new Error('Max 100 URLs per call.');
     const folderId = str(args.folder_id);
-    if (folderId) {
-      const { data: folder } = await db.from('folders').select('id').eq('id', folderId).eq('user_id', userId).maybeSingle();
-      if (!folder) throw new Error('Folder not found.');
-    }
+    if (folderId) await assertOwnedFolder(db, userId, folderId);
     const tags = strArr(args.tags);
     const destination = ['bookmark', 'content'].includes(str(args.destination) ?? '')
       ? str(args.destination) as 'bookmark' | 'content'
@@ -246,6 +246,9 @@ const HANDLERS: Record<string, Handler> = {
   async save_note(db, userId, args) {
     const text = str(args.text);
     if (!text) throw new Error('`text` is required.');
+    // Verify the folder first so a rejected call writes nothing.
+    const folderId = str(args.folder_id);
+    if (folderId) await assertOwnedFolder(db, userId, folderId);
     const noteUrl = `note://${crypto.randomUUID()}`;
     const enrichable = text.length >= 200;
     const { data: item, error } = await db
@@ -266,10 +269,13 @@ const HANDLERS: Record<string, Handler> = {
       .select('id, title, status')
       .single();
     if (error || !item) throw new Error(error?.message ?? 'insert failed');
-    const folderId = str(args.folder_id);
-    if (folderId) await db.from('item_folders').insert({ item_id: item.id, folder_id: folderId, user_id: userId });
+    let folderWarning: string | undefined;
+    if (folderId) {
+      const { error: folderError } = await db.from('item_folders').insert({ item_id: item.id, folder_id: folderId, user_id: userId });
+      if (folderError) folderWarning = 'Saved, but it could not be filed into the folder.';
+    }
     await enqueue(db, { user_id: userId, item_id: item.id, job_type: enrichable ? 'enrich' : 'embed' });
-    return { ...item, note_url: noteUrl };
+    return { ...item, note_url: noteUrl, ...(folderWarning ? { warning: folderWarning } : {}) };
   },
 
   async search(db, userId, args) {
@@ -317,8 +323,8 @@ const HANDLERS: Record<string, Handler> = {
     const { data, error } = await db.from('content_items').select(cols).eq('id', id).eq('user_id', userId).maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) throw new Error('Item not found.');
-    if (args.include_content && typeof (data as Record<string, unknown>).content_text === 'string') {
-      const d = data as Record<string, unknown>;
+    if (args.include_content && typeof (data as unknown as Record<string, unknown>).content_text === 'string') {
+      const d = data as unknown as Record<string, unknown>;
       d.content_text = (d.content_text as string).slice(0, 50000);
     }
     return data;
@@ -327,6 +333,10 @@ const HANDLERS: Record<string, Handler> = {
   async update_item(db, userId, args) {
     const id = str(args.id);
     if (!id) throw new Error('`id` is required.');
+    // Validate every ID before the first write so a rejected call changes nothing.
+    await assertOwnedItem(db, userId, id);
+    const targetFolderId = 'folder_id' in args ? str(args.folder_id) : undefined;
+    if (targetFolderId) await assertOwnedFolder(db, userId, targetFolderId);
     const patch: Record<string, unknown> = {};
     if (str(args.read_status)) patch.read_status = str(args.read_status);
     if (typeof args.is_starred === 'boolean') patch.is_starred = args.is_starred;
@@ -340,16 +350,14 @@ const HANDLERS: Record<string, Handler> = {
     // folder_id present (even null) means "set folder": clear then optionally add.
     if ('folder_id' in args) {
       await db.from('item_folders').delete().eq('item_id', id).eq('user_id', userId);
-      const folderId = str(args.folder_id);
-      if (folderId) {
-        const { data: folder } = await db.from('folders').select('id').eq('id', folderId).eq('user_id', userId).maybeSingle();
-        if (!folder) throw new Error('Folder not found.');
-        await db.from('item_folders').insert({
+      if (targetFolderId) {
+        const { error: folderError } = await db.from('item_folders').insert({
           item_id: id,
-          folder_id: folderId,
+          folder_id: targetFolderId,
           user_id: userId,
           assignment_source: 'user',
         });
+        if (folderError) throw new Error(`Could not file the item: ${folderError.message}`);
       }
     }
     return { id, updated: true };
@@ -377,9 +385,11 @@ const HANDLERS: Record<string, Handler> = {
   async create_folder(db, userId, args) {
     const name = str(args.name);
     if (!name) throw new Error('`name` is required.');
+    const parentId = str(args.parent_id);
+    if (parentId) await assertOwnedFolder(db, userId, parentId);
     const { data, error } = await db
       .from('folders')
-      .insert({ user_id: userId, name, parent_id: str(args.parent_id) ?? null, color: str(args.color) ?? null, icon: str(args.icon) ?? null })
+      .insert({ user_id: userId, name, parent_id: parentId ?? null, color: str(args.color) ?? null, icon: str(args.icon) ?? null })
       .select('id, name, parent_id, color, icon')
       .single();
     if (error) throw new Error(error.message);
@@ -434,7 +444,7 @@ function json(body: unknown, status = 200) {
 const rpcResult = (id: unknown, result: unknown) => ({ jsonrpc: '2.0', id, result });
 const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: '2.0', id, error: { code, message } });
 
-async function handleMessage(db: SupabaseClient, userId: string | null, msg: Record<string, unknown>) {
+export async function handleMessage(db: SupabaseClient, userId: string | null, msg: Record<string, unknown>) {
   const id = msg.id ?? null;
   const method = msg.method as string;
   const params = (msg.params as Record<string, unknown>) ?? {};
@@ -464,7 +474,9 @@ async function handleMessage(db: SupabaseClient, userId: string | null, msg: Rec
         const result = await handler(db, userId, (params.arguments as Args) ?? {});
         return rpcResult(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
       } catch (e) {
-        // Tool errors are reported in-band so the model can see and recover.
+        // A rejected ID is an invalid argument: report it as a JSON-RPC error.
+        if (e instanceof OwnershipError) return rpcError(id, INVALID_PARAMS, e.message);
+        // Other tool errors are reported in-band so the model can see and recover.
         return rpcResult(id, { content: [{ type: 'text', text: `Error: ${(e as Error).message}` }], isError: true });
       }
     }
