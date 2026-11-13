@@ -1,23 +1,25 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom';
-import { Category, Link, AppTheme, Folder, SmartCollection } from './types';
+import { Category, Link, AppTheme, Folder, SmartCollection, SaveDestination } from './types';
 import LinkCard from './components/LinkCard';
 import AddLinkModal from './components/AddLinkModal';
 import ImportModal from './components/ImportModal';
 import ProgressModal from './components/ProgressModal';
-import SettingsView from './components/SettingsView';
 import DeleteConfirmationModal from './components/DeleteConfirmationModal';
 import AuthView from './components/AuthView';
 import FolderSidebar from './components/FolderSidebar';
-import LibraryView, { LibraryMode } from './views/LibraryView';
-import ReaderView from './views/ReaderView';
-import FeedsView from './views/FeedsView';
+import type { LibraryMode } from './views/LibraryView';
 import { ParsedBookmark } from './services/bookmarkService';
 import { supabase } from './services/supabase';
-import { api, toLink } from './services/api';
+import { api, toLink, type HomeStats } from './services/api';
 import { Reveal, CountUp, spotlight, CursorGlow, Starfield } from './components/magic';
 import { Session, AuthChangeEvent } from '@supabase/supabase-js';
+
+const SettingsView = lazy(() => import('./components/SettingsView'));
+const LibraryView = lazy(() => import('./views/LibraryView'));
+const ReaderView = lazy(() => import('./views/ReaderView'));
+const FeedsView = lazy(() => import('./views/FeedsView'));
 
 /** Compact relative time for feed rows: 5m, 3h, 2d. */
 const timeAgo = (ts: number): string => {
@@ -81,6 +83,8 @@ const App: React.FC = () => {
 
   const [links, setLinks] = useState<Link[]>([]);
   const [isVaultLoading, setIsVaultLoading] = useState(true);
+  const [homeStats, setHomeStats] = useState<HomeStats | null>(null);
+  const [homeSearchResults, setHomeSearchResults] = useState<Link[]>([]);
   const [dailyPicks, setDailyPicks] = useState<Link[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -89,10 +93,6 @@ const App: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [draggedPinnedId, setDraggedPinnedId] = useState<string | null>(null);
-  // User-arranged order of Priority Vault pins (ids) — persisted per device.
-  const [pinnedOrder, setPinnedOrder] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('pinned-order') || '[]'); } catch { return []; }
-  });
   // User-arranged order of the home briefing sections — persisted per device.
   const HOME_SECTIONS_DEFAULT = ['phone', 'continue', 'picks', 'fresh', 'bookmarked'] as const;
   const [homeSectionOrder, setHomeSectionOrder] = useState<string[]>(() => {
@@ -126,38 +126,81 @@ const App: React.FC = () => {
   useEffect(() => {
     if (isAuthLoading || !session) return;
     fetchVaultData();
+    let structureRefreshTimer: number | undefined;
+    const refreshSharedStructure = () => {
+      window.clearTimeout(structureRefreshTimer);
+      structureRefreshTimer = window.setTimeout(() => { void fetchVaultData(); }, 1200);
+    };
 
-    // Live pipeline updates: pending -> parsing -> enriching -> ready
-    const unsubscribe = api.items.subscribeToChanges((updated) => {
-      setLinks(prev => prev.map(l => {
-        if (l.id !== updated.id) return l;
+    const upsertRemoteItem = async (id: string) => {
+      const item = await api.items.fetchOne(id);
+      if (!item) return;
+      const link = toLink(item);
+      setLinks(prev => {
+        const index = prev.findIndex(existing => existing.id === link.id);
+        if (index < 0) return [link, ...prev];
+        return prev.map(existing => existing.id === link.id ? link : existing);
+      });
+    };
+
+    // Sync items created, edited, processed, or deleted from another Qlip
+    // client. In particular, INSERT keeps a web vault open on desktop in sync
+    // with a link saved from the phone.
+    const unsubscribe = api.items.subscribeToChanges((updated, eventType) => {
+      refreshSharedStructure();
+      if (eventType === 'DELETE') {
+        setLinks(prev => prev.filter(link => link.id !== updated.id));
+        return;
+      }
+
+      if (eventType === 'INSERT') {
+        void upsertRemoteItem(updated.id).catch(() => { /* next refresh recovers */ });
+        return;
+      }
+
+      setLinks(prev => prev.map(link => {
+        if (link.id !== updated.id) return link;
         return {
-          ...l,
-          title: (updated.title as string) ?? l.title,
-          description: (updated.summary as string) ?? (updated.description as string) ?? l.description,
-          status: (updated.status as Link['status']) ?? l.status,
-          summary: (updated.summary as string) ?? l.summary,
-          tags: (updated.tags as string[]) ?? l.tags,
-          favicon: (updated.favicon_url as string) ?? l.favicon,
-          thumbnailUrl: (updated.thumbnail_url as string) ?? l.thumbnailUrl,
+          ...link,
+          title: (updated.title as string) ?? link.title,
+          description: (updated.summary as string) ?? (updated.description as string) ?? link.description,
+          status: (updated.status as Link['status']) ?? link.status,
+          summary: (updated.summary as string) ?? link.summary,
+          tags: (updated.tags as string[]) ?? link.tags,
+          topic: (updated.topic as string) ?? link.topic,
+          favicon: (updated.favicon_url as string) ?? link.favicon,
+          thumbnailUrl: (updated.thumbnail_url as string) ?? link.thumbnailUrl,
+          kind: (updated.item_kind as Link['kind']) ?? link.kind,
+          savedVia: (updated.saved_via as Link['savedVia']) ?? link.savedVia,
+          readStatus: (updated.read_status as Link['readStatus']) ?? link.readStatus,
+          isStarred: (updated.is_starred as boolean) ?? link.isStarred,
+          isPinned: (updated.is_pinned as boolean) ?? link.isPinned,
+          pinPosition: updated.pin_position === null
+            ? null
+            : (updated.pin_position as number | undefined) ?? link.pinPosition,
         };
       }));
     });
-    return unsubscribe;
-  }, [session, isAuthLoading]);
+    const unsubscribeStructure = api.items.subscribeToStructureChanges(refreshSharedStructure);
+    return () => {
+      unsubscribe();
+      unsubscribeStructure();
+      window.clearTimeout(structureRefreshTimer);
+    };
+  }, [session?.user.id, isAuthLoading]);
 
   const fetchVaultData = async () => {
     try {
-      const [items, cats, folderTree, collections] = await Promise.all([
-        api.items.fetchAll(),
-        api.folders.fetchAll(),
+      const [home, folderTree, collections] = await Promise.all([
+        api.items.fetchHome(),
         api.folders.fetchTree(),
         api.smartCollections.fetchAll(),
       ]);
-      setCategories(cats);
+      setCategories(folderTree.map(folder => ({ id: folder.id, name: folder.name, color: folder.color || 'bg-zinc-100', icon: folder.icon || 'fa-folder' })));
       setFolders(folderTree);
       setSmartCollections(collections);
-      setLinks(items.map(toLink));
+      setLinks(home.items.map(toLink));
+      setHomeStats(home.stats);
     } catch (err) {
       console.error("Failed to fetch vault data:", err);
     } finally {
@@ -225,8 +268,8 @@ const App: React.FC = () => {
     };
   }, [accountMenuOpen]);
 
-  const addLink = async (url: string, folderId?: string) => {
-    const result = await api.items.save(url, folderId);
+  const addLink = async (url: string, folderId?: string, destination: SaveDestination = 'auto') => {
+    const result = await api.items.save(url, folderId, destination);
     if (result.duplicate) {
       throw new Error('Already saved — this URL is in your vault.');
     }
@@ -354,12 +397,15 @@ const App: React.FC = () => {
     const item = links.find(l => l.id === id);
     if (!item) return;
     const next = !item.isPinned;
-    setLinks(prev => prev.map(l => l.id === id ? { ...l, isPinned: next } : l));
+    const nextPosition = next
+      ? Math.max(-1, ...links.filter(link => link.isPinned).map(link => link.pinPosition ?? -1)) + 1
+      : null;
+    setLinks(prev => prev.map(l => l.id === id ? { ...l, isPinned: next, pinPosition: nextPosition } : l));
     try {
-      await api.items.update(id, { is_pinned: next });
+      await api.items.update(id, { is_pinned: next, pin_position: nextPosition });
     } catch (e: any) {
       alert(e.message);
-      setLinks(prev => prev.map(l => l.id === id ? { ...l, isPinned: !next } : l));
+      setLinks(prev => prev.map(l => l.id === id ? { ...l, isPinned: !next, pinPosition: item.pinPosition } : l));
     }
   };
 
@@ -408,9 +454,10 @@ const App: React.FC = () => {
     setDraggedPinnedId(id);
   };
 
-  const handlePinnedDrop = (targetId: string) => {
+  const handlePinnedDrop = async (targetId: string) => {
     if (!draggedPinnedId || draggedPinnedId === targetId) { setDraggedPinnedId(null); return; }
-    // Reorder within the pinned set only, and persist so it survives reloads.
+    // Reorder within the pinned set and persist to Postgres so every client
+    // renders the same Priority Vault.
     const currentIds = pinnedLinks.map(l => l.id);
     const from = currentIds.indexOf(draggedPinnedId);
     const to = currentIds.indexOf(targetId);
@@ -418,9 +465,15 @@ const App: React.FC = () => {
     const next = [...currentIds];
     next.splice(from, 1);
     next.splice(to, 0, draggedPinnedId);
-    setPinnedOrder(next);
-    localStorage.setItem('pinned-order', JSON.stringify(next));
+    const positions = new Map(next.map((id, index) => [id, index]));
+    setLinks(prev => prev.map(link => positions.has(link.id) ? { ...link, pinPosition: positions.get(link.id)! } : link));
     setDraggedPinnedId(null);
+    try {
+      await api.items.setPinnedOrder(next);
+    } catch (error: any) {
+      alert(error.message);
+      fetchVaultData();
+    }
   };
 
   /** Re-run the parse pipeline for a card whose fetch failed or missed data. */
@@ -451,11 +504,10 @@ const App: React.FC = () => {
   // Vault Hub is the home for BOOKMARKS — plain website links you saved to
   // reference. Articles, social posts and videos are "content" and live in the
   // Library; RSS lives in /feeds. `item_kind` is computed server-side.
-  // Bookmarks exclude phone/extension saves (saved_via='mobile') — those live
-  // only in the "From your phone" section + Library Mobile tab. Drives the
-  // Bookmarks stat, Priority Vault and Recently bookmarked.
+  // Origin never changes destination: a domain saved on iPhone is still a
+  // Bookmark and may also appear in the From your phone section.
   const vaultLinks = useMemo<Link[]>(
-    () => links.filter(l => l.kind === 'bookmark' && l.savedVia !== 'mobile'),
+    () => links.filter(l => l.kind === 'bookmark'),
     [links]
   );
 
@@ -468,20 +520,18 @@ const App: React.FC = () => {
     [links]
   );
 
-  // Everything saved from the Linkat phone app — both bookmarks and content —
-  // gets its own home section (and opens the in-app reader on click).
+  // Everything saved from the native app or its share extension gets its own
+  // home section and opens Qlip's reader when enriched content is available.
   const phoneLinks = useMemo<Link[]>(
-    () => links.filter(l => l.savedVia === 'mobile').slice(0, 8),
+    () => links.filter(l => l.savedVia === 'mobile' || l.savedVia === 'extension').slice(0, 8),
     [links]
   );
 
   const pinnedLinks = useMemo<Link[]>(() => {
-    const pinned = vaultLinks.filter(l => l.isPinned);
-    if (!pinnedOrder.length) return pinned;
-    // User-arranged order first; anything pinned since the last arrange goes to the end.
-    const rank = new Map(pinnedOrder.map((id, i) => [id, i]));
-    return [...pinned].sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
-  }, [vaultLinks, pinnedOrder]);
+    return links
+      .filter(l => l.isPinned)
+      .sort((a, b) => (a.pinPosition ?? Infinity) - (b.pinPosition ?? Infinity) || b.createdAt - a.createdAt);
+  }, [links]);
 
   const processingLinks = useMemo<Link[]>(
     () => links.filter(l => l.status === 'pending' || l.status === 'parsing' || l.status === 'enriching'),
@@ -491,17 +541,18 @@ const App: React.FC = () => {
   // Home is a daily briefing: capped, purposeful sections. The full archive lives in /library.
   // Smart global search: spans the whole vault (bookmarks + content), matching
   // title, url, summary, topic and tags — so you can search by topic or any word.
-  const searchMatches = useMemo<Link[]>(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return [];
-    return links.filter(link =>
-      link.title.toLowerCase().includes(q) ||
-      link.url.toLowerCase().includes(q) ||
-      (link.summary || '').toLowerCase().includes(q) ||
-      (link.topic || '').toLowerCase().includes(q) ||
-      (link.tags || []).some(t => t.toLowerCase().includes(q))
-    );
-  }, [links, searchQuery]);
+  useEffect(() => {
+    let cancelled = false;
+    setHomeSearchResults([]);
+    if (!session || location.pathname !== '/' || !searchQuery.trim()) return;
+    const timer = window.setTimeout(() => {
+      api.items.searchHome(searchQuery.trim()).then(items => {
+        if (!cancelled) setHomeSearchResults(items.map(toLink));
+      }).catch(error => console.error('Home search failed:', error));
+    }, 250);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [searchQuery, session?.user.id, location.pathname]);
+  const searchMatches = homeSearchResults;
 
   // Search results grouped into source sections (Articles, Videos, Reels, …).
   const SOURCE_LABELS: Record<string, string> = {
@@ -519,9 +570,10 @@ const App: React.FC = () => {
     return [...by.entries()].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
   }, [searchMatches]);
 
-  // "Reading" is a content concept — this section bridges the home into /library.
+  // Phone captures have a dedicated surface, so the Reading queue stays free
+  // of items already represented in "From your phone".
   const continueReading = useMemo<Link[]>(
-    () => libraryLinks.filter(l => l.readStatus === 'reading').slice(0, 6),
+    () => libraryLinks.filter(l => l.readStatus === 'reading' && l.savedVia !== 'mobile' && l.savedVia !== 'extension').slice(0, 6),
     [libraryLinks]
   );
 
@@ -529,7 +581,7 @@ const App: React.FC = () => {
 
   // Phone saves have their own section, so keep them out of Recently bookmarked.
   const recentlySaved = useMemo<Link[]>(
-    () => vaultLinks.filter(l => l.savedVia !== 'mobile').slice(0, 12),
+    () => vaultLinks.filter(l => l.savedVia !== 'mobile' && l.savedVia !== 'extension').slice(0, 12),
     [vaultLinks]
   );
 
@@ -543,7 +595,7 @@ const App: React.FC = () => {
     [smartCollections]
   );
 
-  const stats = useMemo(() => ({
+  const stats = useMemo(() => homeStats ?? ({
     total: vaultLinks.length,
     // "AI enriched: 0" read as broken (legacy items are intentionally unenriched) —
     // unread + this-week are actionable numbers instead.
@@ -552,7 +604,7 @@ const App: React.FC = () => {
     library: libraryLinks.length,
     feeds: links.filter(l => l.sourceType === 'rss').length,
     processing: processingLinks.length,
-  }), [links, vaultLinks, libraryLinks, processingLinks]);
+  }), [homeStats, links, vaultLinks, libraryLinks, processingLinks]);
 
   const greeting = useMemo(() => {
     const h = currentTime.getHours();
@@ -721,6 +773,7 @@ const App: React.FC = () => {
       </nav>
 
       <main className="max-w-[1600px] mx-auto p-6 lg:p-12 space-y-12 pb-32 lg:pb-24">
+        <Suspense fallback={<div role="status" className="py-20 text-center text-zinc-400">Loading…</div>}>
         <Routes>
           <Route path="/" element={
             <>
@@ -769,7 +822,10 @@ const App: React.FC = () => {
                 </div>
                 <div className="w-full lg:w-[56%] relative bg-[#0D1B2B]/50 p-6 lg:p-8 flex flex-col min-h-[300px]">
                   <div className="flex items-center justify-between mb-6">
-                    <span className="eyebrow">{stats.processing > 0 ? 'AI Pipeline' : 'Fresh from feeds'}</span>
+                    <div>
+                      <span className="eyebrow">AI Pipeline</span>
+                      <p className="text-[10px] font-bold text-zinc-600 mt-1">New captures and feed intelligence</p>
+                    </div>
                     {stats.processing > 0 ? (
                       <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border" style={{ color: 'var(--lime)', borderColor: 'rgba(168,207,56,.3)', background: 'rgba(168,207,56,.08)' }}>
                         <i className="fa-solid fa-spinner fa-spin text-[10px]"></i>
@@ -782,19 +838,39 @@ const App: React.FC = () => {
                     )}
                   </div>
                   <div className="flex-grow overflow-y-auto no-scrollbar space-y-3 max-h-[430px]">
-                    {processingLinks.length > 0 ? (
-                      // Pipeline takes over the panel only while something is actually processing.
-                      processingLinks.slice(0, 6).map(link => (
+                    {processingLinks.length > 0 && (
+                      <>
+                        <div className="flex items-center gap-2 px-1 pt-1">
+                          <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--lime)' }}></span>
+                          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Live queue</span>
+                        </div>
+                        {processingLinks.slice(0, 4).map(link => (
                         <div key={`pipe-${link.id}`} className="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/[0.05] rounded-xl">
-                          <i className="fa-solid fa-spinner fa-spin text-xs shrink-0" style={{ color: 'var(--lime)' }}></i>
+                          <div className="w-8 h-8 rounded-lg border border-white/[0.08] bg-[#0A1320] grid place-items-center shrink-0">
+                            <i className={`fa-solid ${link.sourceType === 'rss' ? 'fa-rss' : 'fa-sparkles'} text-xs`} style={{ color: 'var(--lime)' }}></i>
+                          </div>
                           <div className="min-w-0 flex-grow">
                             <p className="text-[11px] font-bold text-zinc-300 truncate">{link.title}</p>
-                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600">{link.status === 'pending' ? 'Queued' : link.status === 'parsing' ? 'Reading content' : 'AI analysis'}</p>
+                            <div className="flex items-center gap-1.5 mt-1" aria-label={`Pipeline status: ${link.status}`}>
+                              {['pending', 'parsing', 'enriching'].map((stage, index) => {
+                                const current = link.status === 'pending' ? 0 : link.status === 'parsing' ? 1 : 2;
+                                return <span key={stage} className="h-1 flex-1 rounded-full" style={{ background: index <= current ? 'var(--lime)' : 'rgba(255,255,255,.08)', opacity: index < current ? .55 : 1 }} />;
+                              })}
+                            </div>
+                            <p className="text-[9px] font-black uppercase tracking-widest text-zinc-600 mt-1">{link.status === 'pending' ? 'Queued' : link.status === 'parsing' ? 'Reading content' : 'AI analysis'} · {link.sourceType === 'rss' ? 'Feed' : 'Capture'}</p>
                           </div>
+                          <i className="fa-solid fa-spinner fa-spin text-[10px] shrink-0" style={{ color: 'var(--lime)' }}></i>
                         </div>
-                      ))
-                    ) : feedLinks.length > 0 ? (
-                      feedLinks.map(link => (
+                        ))}
+                      </>
+                    )}
+                    {feedLinks.length > 0 && (
+                      <>
+                        <div className="flex items-center justify-between px-1 pt-2">
+                          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-500">Fresh from feeds</span>
+                          <NavLink to="/feeds" className="text-[9px] font-black uppercase tracking-widest hover:text-white transition-colors" style={{ color: 'var(--lime)' }}>View all</NavLink>
+                        </div>
+                        {feedLinks.slice(0, processingLinks.length > 0 ? 4 : 7).map(link => (
                         <NavLink key={`feed-${link.id}`} to={`/item/${link.id}`} className="flex items-center gap-3 p-3 bg-white/[0.02] border border-white/[0.05] rounded-xl hover:bg-white/[0.05] hover:border-white/10 transition-all group/feed">
                           <div className="w-8 h-8 rounded-lg bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
                             <img
@@ -806,12 +882,14 @@ const App: React.FC = () => {
                           </div>
                           <div className="min-w-0 flex-grow">
                             <p className="text-xs font-bold text-zinc-300 line-clamp-2 leading-snug group-hover/feed:text-white transition-colors">{link.title}</p>
-                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600 truncate mt-0.5">{timeAgo(link.createdAt)} ago{link.summary ? ' · enriched' : ''}</p>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600 truncate mt-0.5">{timeAgo(link.createdAt)} ago · {link.summary ? 'AI ready' : 'captured'}</p>
                           </div>
-                          <i className="fa-solid fa-chevron-right text-[10px] text-zinc-700 group-hover/feed:text-zinc-400 shrink-0"></i>
+                          <i className="fa-solid fa-circle-check text-[10px] text-emerald-500/70 shrink-0"></i>
                         </NavLink>
-                      ))
-                    ) : (
+                        ))}
+                      </>
+                    )}
+                    {processingLinks.length === 0 && feedLinks.length === 0 && (
                       <div className="h-full flex flex-col items-center justify-center text-center space-y-3 opacity-40">
                         <i className="fa-solid fa-rss text-2xl text-zinc-600"></i>
                         <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">No feed items yet</p>
@@ -840,18 +918,8 @@ const App: React.FC = () => {
 
                 <div className="flex-grow overflow-y-auto pr-2 no-scrollbar grid grid-cols-3 gap-4 content-start">
                   {pinnedLinks.length > 0 ? (
-                    pinnedLinks.map(link => (
-                      <a
-                        key={`pinned-mini-${link.id}`}
-                        href={link.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        draggable
-                        onDragStart={() => handlePinnedDragStart(link.id)}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={() => handlePinnedDrop(link.id)}
-                        className="group relative flex flex-col items-center justify-center p-3 bg-white/[0.02] rounded-2xl border border-white/[0.05] hover:bg-white/[0.05] hover:border-white/10 transition-all cursor-pointer text-center min-h-[80px]"
-                      >
+                    pinnedLinks.map(link => {
+                      const tile = <>
                         <div className="w-[34px] h-[34px] rounded-xl bg-[#0A1320] border border-white/10 flex items-center justify-center overflow-hidden shrink-0 shadow-lg mb-2">
                           <img
                             src={link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
@@ -863,8 +931,20 @@ const App: React.FC = () => {
                         <p className="text-[10px] font-black text-zinc-400 truncate w-full uppercase tracking-tighter leading-tight">
                           {link.title}
                         </p>
-                      </a>
-                    ))
+                      </>;
+                      const sharedProps = {
+                        draggable: true,
+                        onDragStart: () => handlePinnedDragStart(link.id),
+                        onDragOver: (event: React.DragEvent) => event.preventDefault(),
+                        onDrop: () => handlePinnedDrop(link.id),
+                        className: 'group relative flex flex-col items-center justify-center p-3 bg-white/[0.02] rounded-2xl border border-white/[0.05] hover:bg-white/[0.05] hover:border-white/10 transition-all cursor-pointer text-center min-h-[80px]',
+                      };
+                      return link.kind === 'content' || link.savedVia === 'mobile' || link.savedVia === 'extension' ? (
+                        <NavLink key={`pinned-mini-${link.id}`} to={`/item/${link.id}`} {...sharedProps}>{tile}</NavLink>
+                      ) : (
+                        <a key={`pinned-mini-${link.id}`} href={link.url} target="_blank" rel="noopener noreferrer" {...sharedProps}>{tile}</a>
+                      );
+                    })
                   ) : (
                     <div className="col-span-full h-full flex flex-col items-center justify-center text-center p-6 space-y-4 opacity-20">
                       <div className="w-12 h-12 rounded-full border border-dashed border-zinc-700 flex items-center justify-center">
@@ -922,7 +1002,7 @@ const App: React.FC = () => {
                   </div>
                 )}
               </div>
-            ) : vaultLinks.length === 0 ? (
+            ) : stats.total === 0 ? (
               <div className="py-24 text-center space-y-4">
                 <i className="fa-solid fa-box-open text-4xl text-zinc-800"></i>
                 <div className="space-y-1">
@@ -1078,7 +1158,7 @@ const App: React.FC = () => {
                             {reorderControls}
                             <div className="h-px flex-grow bg-white/5"></div>
                             <NavLink to="/library?kind=bookmark" className="text-[10px] font-black text-zinc-500 uppercase tracking-widest hover:text-white transition-colors">
-                              View all {vaultLinks.length.toLocaleString()} <i className="fa-solid fa-arrow-right ml-1"></i>
+                              View all {stats.total.toLocaleString()} <i className="fa-solid fa-arrow-right ml-1"></i>
                             </NavLink>
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
@@ -1106,6 +1186,7 @@ const App: React.FC = () => {
           <Route path="/settings" element={<SettingsView categories={categories} currentTheme={theme} onThemeChange={setTheme} onAddCategory={handleAddCategory} onUpdateCategory={handleUpdateCategory} onDeleteCategory={confirmDeleteCategory} onReorderCategories={handleReorderCategories} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </main>
 
       {/* Mobile bottom navigation — the pill nav above is desktop-only */}
@@ -1132,7 +1213,7 @@ const App: React.FC = () => {
       </nav>
 
       <AddLinkModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} categories={categories} onAdd={addLink} />
-      <ImportModal isOpen={isImportModalOpen} onClose={() => setIsImportModalOpen(false)} onImport={handleImport} existingCount={links.length} />
+      <ImportModal isOpen={isImportModalOpen} onClose={() => setIsImportModalOpen(false)} onImport={handleImport} existingCount={stats.total + stats.library} />
     </div>
   );
 };

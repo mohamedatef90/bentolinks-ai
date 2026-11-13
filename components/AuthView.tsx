@@ -65,7 +65,7 @@ const AuthView: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden text-white selection:bg-neon-accent selection:text-black">
+    <div className="min-h-screen flex items-center justify-center p-4 sm:p-6 relative overflow-hidden text-white selection:bg-neon-accent selection:text-black">
       {/* Refined Background Elements - No Blur */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#A8CF38]/5 rounded-full"></div>
@@ -77,22 +77,22 @@ const AuthView: React.FC = () => {
       </div>
 
       <div className="w-full max-w-lg perspective-1000 z-10">
-        <div className="bento-card p-10 md:p-14 relative shadow-[0_40px_120px_rgba(0,0,0,0.9)] border-white/10 bg-[#0A1320] transition-all duration-500">
+        <div className="bento-card p-7 sm:p-10 md:p-14 relative shadow-[0_40px_120px_rgba(0,0,0,0.9)] border-white/10 bg-[#0A1320] transition-all duration-500">
           
           {/* Header Section */}
-          <div className="flex flex-col items-center mb-10 text-center">
+          <div className="flex flex-col items-center mb-8 sm:mb-10 text-center">
             <div className="relative mb-6 group">
               <div className="w-16 h-16 rounded-2xl flex items-center justify-center relative shadow-2xl transition-transform group-hover:scale-110 duration-500" style={{ background: 'linear-gradient(135deg,#7CB342,#A8CF38)' }}>
                  <span className="text-[#0A1320] font-black text-3xl leading-none tracking-tighter">Q</span>
               </div>
             </div>
             
-            <h1 className="text-3xl font-black tracking-tighter uppercase mb-2 flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tighter uppercase mb-2 flex flex-wrap items-center justify-center gap-2">
               {isLogin ? 'Protocol: Login' : 'Protocol: Register'}
               <span className="px-1.5 py-0.5 bg-neon-accent text-black text-[8px] rounded font-black tracking-widest uppercase">Secured</span>
             </h1>
             
-            <p className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] mb-6">
+            <p className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.16em] sm:tracking-[0.2em] mb-6">
               {isLogin ? 'Access your cloud-synced resource vault' : 'Create a new project-based operator identity'}
             </p>
 
@@ -189,7 +189,7 @@ const AuthView: React.FC = () => {
           <div className="mt-10 pt-8 border-t border-white/5 text-center">
             <button 
               onClick={() => { setIsLogin(!isLogin); setError(null); }}
-              className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 hover:text-neon-accent transition-colors flex items-center justify-center gap-2 mx-auto"
+              className="text-[10px] font-black uppercase tracking-[0.16em] sm:tracking-[0.2em] text-zinc-500 hover:text-neon-accent transition-colors inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-1 mx-auto leading-relaxed"
             >
               {isLogin ? (
                 <>Need to create an account? <span className="text-white hover:underline">Sign up</span></>
@@ -202,7 +202,7 @@ const AuthView: React.FC = () => {
         
         {/* Footer Credit */}
         <p className="mt-8 text-center text-[10px] font-black text-zinc-700 uppercase tracking-[0.4em]">
-          Qlip Neural Hub &copy; 2025
+          Qlip Neural Hub &copy; {new Date().getFullYear()}
         </p>
       </div>
     </div>

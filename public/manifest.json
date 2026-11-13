@@ -4,7 +4,7 @@
   "description": "Save anything and turn it into readable, searchable knowledge with AI.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0A1320",
+  "background_color": "#FFFFFF",
   "theme_color": "#A8CF38",
   "orientation": "portrait-primary",
   "icons": [

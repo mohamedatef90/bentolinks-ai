@@ -10,6 +10,7 @@ export type SourceType =
  * Computed server-side as a generated column on content_items.
  */
 export type ItemKind = 'bookmark' | 'content';
+export type SaveDestination = 'auto' | ItemKind;
 
 /** Which client saved the item (web app, Qlip mobile, extension, bulk import, RSS poller). */
 export type SavedVia = 'web' | 'mobile' | 'extension' | 'import' | 'rss' | 'mcp';
@@ -36,6 +37,7 @@ export interface ContentItem {
   key_points: string[] | null;
   tags: string[];
   topic: string | null;
+  content_type_label?: string | null;
   source_type: SourceType;
   item_kind?: ItemKind;
   status: ItemStatus;
@@ -44,11 +46,19 @@ export interface ContentItem {
   thumbnail_url: string | null;
   favicon_url: string | null;
   is_pinned: boolean;
+  pin_position: number | null;
   is_starred: boolean;
   read_status: 'unread' | 'reading' | 'read';
   section: string | null;
   created_at: string;
-  item_folders?: { folder_id: string }[];
+  raw_metadata?: {
+    enriched_by?: string;
+    ai?: Record<string, unknown>;
+    parser?: Record<string, unknown>;
+    processing?: Record<string, unknown>;
+    [key: string]: unknown;
+  } | null;
+  item_folders?: { folder_id: string; assignment_source?: 'ai' | 'user' }[];
 }
 
 /** Row shape of the folders table (tree via parent_id, max depth 3). */
@@ -119,6 +129,7 @@ export interface Link {
   user_id?: string;
   favicon?: string;
   isPinned?: boolean;
+  pinPosition?: number | null;
   isStarred?: boolean;
   readStatus?: 'unread' | 'reading' | 'read';
   status?: ItemStatus;
