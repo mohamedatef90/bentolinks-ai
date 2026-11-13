@@ -1,17 +1,18 @@
 
 import React, { useState } from 'react';
-import { Category } from '../types';
+import { Category, SaveDestination } from '../types';
 
 interface AddLinkModalProps {
   isOpen: boolean;
   onClose: () => void;
   categories: Category[];
-  onAdd: (url: string, folderId?: string) => Promise<void>;
+  onAdd: (url: string, folderId?: string, destination?: SaveDestination) => Promise<void>;
 }
 
 const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories, onAdd }) => {
   const [url, setUrl] = useState('');
   const [folderId, setFolderId] = useState('');
+  const [destination, setDestination] = useState<SaveDestination>('auto');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,9 +24,10 @@ const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories
     setIsSaving(true);
     setError(null);
     try {
-      await onAdd(url, folderId || undefined);
+      await onAdd(url, folderId || undefined, destination);
       setUrl('');
       setFolderId('');
+      setDestination('auto');
       onClose();
     } catch (err: any) {
       setError(err?.message || 'Save failed. Please try again.');
@@ -68,6 +70,22 @@ const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories
           </div>
 
           <div className="space-y-3">
+            <label className="text-[11px] uppercase tracking-[0.2em] font-black text-zinc-600 px-1">Save in</label>
+            <div className="relative">
+              <select
+                className="w-full bg-[#0A1320]/40 border border-white/5 rounded-[1.5rem] px-6 py-5 text-sm focus:outline-none focus:ring-2 focus:ring-white/10 transition-all appearance-none cursor-pointer font-bold"
+                value={destination}
+                onChange={(e) => setDestination(e.target.value as SaveDestination)}
+              >
+                <option value="auto">Automatic — Qlip decides from the URL</option>
+                <option value="bookmark">Bookmarks — website or tool</option>
+                <option value="content">Reading — article, post, PDF or e-book</option>
+              </select>
+              <i className="fa-solid fa-chevron-down absolute right-6 top-1/2 -translate-y-1/2 text-zinc-600 pointer-events-none text-[10px]"></i>
+            </div>
+          </div>
+
+          <div className="space-y-3">
             <label className="text-[11px] uppercase tracking-[0.2em] font-black text-zinc-600 px-1">Folder (optional)</label>
             <div className="relative">
               <select
@@ -87,7 +105,11 @@ const AddLinkModal: React.FC<AddLinkModalProps> = ({ isOpen, onClose, categories
           <div className="flex items-center gap-3 px-1 text-zinc-500">
             <i className="fa-solid fa-wand-magic-sparkles text-[#A8CF38] text-xs"></i>
             <p className="text-[10px] font-bold uppercase tracking-widest">
-              Content, summary, tags &amp; topic are extracted automatically after save
+              {destination === 'auto'
+                ? 'Domains go to Bookmarks; articles, social posts, PDFs and e-books go to Reading.'
+                : destination === 'bookmark'
+                  ? 'This link will stay in Bookmarks while AI adds its title, summary and category.'
+                  : 'This link will stay in Reading while AI extracts and summarizes it.'}
             </p>
           </div>
 

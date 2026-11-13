@@ -94,10 +94,15 @@ const LibraryView: React.FC<LibraryViewProps> = ({ mode, searchQuery, folders, s
         } else if (mode === 'inbox') {
           data = await api.items.fetchByFilter({ sort: 'date_desc' });
         } else {
-          // The Mobile tab views links saved from the Linkat app (both kinds).
+          // Phone captures have their own tab, so each Library view stays
+          // mutually exclusive: Mobile contains phone saves; Reading and
+          // Bookmarks contain everything else.
           const base: FilterState = { ...filter, kind: effectiveKind };
-          if (kindTab === 'mobile') base.saved_via = ['mobile'];
+          if (kindTab === 'mobile') base.saved_via = ['mobile', 'extension'];
           data = await api.items.fetchByFilter(base);
+          if (kindTab !== 'mobile') {
+            data = data.filter((item) => item.saved_via !== 'mobile' && item.saved_via !== 'extension');
+          }
         }
         if (!cancelled) setItems(data);
       } catch (err) {

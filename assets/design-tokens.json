@@ -1,0 +1,40 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "color": {
+    "primitive": {
+      "midnight": { "$value": "#08131F", "$type": "color" },
+      "panel": { "$value": "#102131", "$type": "color" },
+      "panelRaised": { "$value": "#183044", "$type": "color" },
+      "lime": { "$value": "#B9E64B", "$type": "color" },
+      "mint": { "$value": "#61D58A", "$type": "color" },
+      "amber": { "$value": "#F2B84B", "$type": "color" },
+      "cloud": { "$value": "#F4F7F2", "$type": "color" },
+      "mist": { "$value": "#9AABB7", "$type": "color" },
+      "hairline": { "$value": "#294155", "$type": "color" }
+    },
+    "semantic": {
+      "background": { "$value": "{color.primitive.midnight}", "$type": "color" },
+      "surface": { "$value": "{color.primitive.panel}", "$type": "color" },
+      "surfaceRaised": { "$value": "{color.primitive.panelRaised}", "$type": "color" },
+      "primary": { "$value": "{color.primitive.lime}", "$type": "color" },
+      "success": { "$value": "{color.primitive.mint}", "$type": "color" },
+      "warning": { "$value": "{color.primitive.amber}", "$type": "color" },
+      "foreground": { "$value": "{color.primitive.cloud}", "$type": "color" },
+      "foregroundMuted": { "$value": "{color.primitive.mist}", "$type": "color" },
+      "border": { "$value": "{color.primitive.hairline}", "$type": "color" }
+    }
+  },
+  "space": {
+    "xs": { "$value": "4px", "$type": "dimension" },
+    "sm": { "$value": "8px", "$type": "dimension" },
+    "md": { "$value": "16px", "$type": "dimension" },
+    "lg": { "$value": "24px", "$type": "dimension" },
+    "xl": { "$value": "32px", "$type": "dimension" }
+  },
+  "radius": {
+    "control": { "$value": "14px", "$type": "dimension" },
+    "card": { "$value": "22px", "$type": "dimension" },
+    "hero": { "$value": "28px", "$type": "dimension" },
+    "pill": { "$value": "999px", "$type": "dimension" }
+  }
+}

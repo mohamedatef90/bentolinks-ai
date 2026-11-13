@@ -48,7 +48,8 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
   const title = item.title || item.url;
   const dateLabel = formatDate(item.published_at) || formatDate(item.created_at);
   const isBookmark = item.item_kind === 'bookmark';
-  const fromMobile = item.saved_via === 'mobile';
+  const fromMobile = item.saved_via === 'mobile' || item.saved_via === 'extension';
+  const opensInReader = !isBookmark || fromMobile;
   const isProcessing = item.status === 'pending' || item.status === 'parsing' || item.status === 'enriching';
   const currentFolderId = item.item_folders?.[0]?.folder_id ?? '';
   // A plain website link reads as "bookmark", not its raw source_type ("article").
@@ -66,10 +67,9 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
       ? { label: 'Read again', icon: 'fa-rotate-left' }
       : { label: 'Read', icon: 'fa-book-open' };
 
-  // Bookmarks have no reader content — the card opens the source directly.
-  // Content opens the in-app reader (summary, key points, TTS).
+  // Phone captures with enriched content (for example YouTube videos) use the
+  // same reader as web content. Plain bookmarks open their source directly.
   const openCard = () => {
-    // Phone-saved links open the in-app reader ("read mode") like content does.
     if (isBookmark && !fromMobile) { window.open(item.url, '_blank', 'noopener,noreferrer'); return; }
     navigate(`/item/${item.id}`);
   };
@@ -84,7 +84,7 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
       tabIndex={0}
       onClick={openCard}
       onKeyDown={(e) => { if (e.key === 'Enter') openCard(); }}
-      title={isBookmark ? 'Open source link' : 'Open in reader'}
+      title={opensInReader ? 'Open in reader' : 'Open source link'}
       className={`bento-card spot group relative p-5 transition-all hover:border-white/10 shadow-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8CF38]/60 ${
       viewMode === 'list' ? 'flex items-center gap-5' : 'flex flex-col h-full'
     }`} onMouseMove={spotlight}>
@@ -99,8 +99,14 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
             <img
               src={thumb || item.favicon_url || `https://www.google.com/s2/favicons?sz=64&domain=${item.url}`}
               alt=""
+              loading="lazy"
+              referrerPolicy="no-referrer"
               className={thumb ? 'w-full h-full object-cover' : 'w-7 h-7 object-contain'}
-              onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${title}&background=0D1B2B&color=fff`)}
+              onError={(e) => {
+                const fallback = item.favicon_url || `https://www.google.com/s2/favicons?sz=64&domain=${item.url}`;
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = fallback;
+              }}
             />
           </div>
           <div className="min-w-0 flex-grow">
@@ -222,7 +228,7 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
               )}
               {dateLabel && <><span className="text-zinc-700">·</span><span className="text-zinc-500 normal-case tracking-normal font-bold shrink-0">{dateLabel}</span></>}
             </span>
-            {isBookmark ? (
+            {!opensInReader ? (
               <a href={item.url} target="_blank" rel="noopener noreferrer" onClick={stop}
                 className="shrink-0 ml-2 inline-flex items-center gap-2 bg-white/10 text-white hover:bg-[#A8CF38] hover:text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20">
                 <i className="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>Visit site
@@ -266,7 +272,7 @@ const ItemCard: React.FC<ItemCardProps> = ({ item, viewMode, onToggleStar, onCyc
           ) : (
             <span className="text-[10px] font-black uppercase tracking-widest text-zinc-600">{typeLabel}</span>
           )}
-          {isBookmark ? (
+          {!opensInReader ? (
             <a href={item.url} target="_blank" rel="noopener noreferrer" onClick={stop}
               className="inline-flex items-center gap-2 bg-white/10 text-white hover:bg-[#A8CF38] hover:text-black transition-all px-4 py-1.5 rounded-full text-[11px] font-bold shadow-lg shadow-black/20">
               <i className="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>Visit

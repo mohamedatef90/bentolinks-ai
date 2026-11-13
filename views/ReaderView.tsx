@@ -12,6 +12,7 @@ const ReaderView: React.FC = () => {
   const [item, setItem] = useState<ContentItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [fontSizeIdx, setFontSizeIdx] = useState(1);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const hasMarkedRead = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -30,6 +31,7 @@ const ReaderView: React.FC = () => {
     setTranslation(null);
     setShowArabic(false);
     setTranslateError(null);
+    setThumbnailFailed(false);
     api.items.fetchOne(id).then(data => {
       if (cancelled) return;
       setItem(data);
@@ -83,6 +85,9 @@ const ReaderView: React.FC = () => {
 
   let domain = '';
   try { domain = new URL(item.url).hostname; } catch { /* malformed url */ }
+  const isSocial = ['reel', 'tweet', 'reddit'].includes(item.source_type) ||
+    /(^|\.)(facebook\.com|fb\.com|fb\.watch|instagram\.com|tiktok\.com|twitter\.com|x\.com|reddit\.com|threads\.net|linkedin\.com)$/i
+      .test(domain.replace(/^www\./, ''));
 
   const handleTranslate = async () => {
     // Once fetched, the button just toggles between Arabic and the original.
@@ -134,13 +139,24 @@ const ReaderView: React.FC = () => {
           </div>
 
           {/* Article / post / reel hero image */}
-          {item.thumbnail_url && (
-            <img
-              src={item.thumbnail_url}
-              alt=""
-              className="w-full rounded-3xl border border-white/[0.06] object-cover max-h-[420px] shadow-2xl shadow-black/40"
-              onError={(e) => { e.currentTarget.style.display = 'none'; }}
-            />
+          {(item.thumbnail_url || isSocial) && (
+            <div className="aspect-video max-h-[380px] overflow-hidden rounded-3xl border border-white/[0.06] bg-[#0D1B2B] shadow-2xl shadow-black/40">
+              {thumbnailFailed || !item.thumbnail_url ? (
+                <div className="w-full h-full grid place-items-center text-[#A8CF38] bg-gradient-to-br from-white/[0.03] to-[#A8CF38]/10">
+                  <i className="fa-solid fa-photo-film text-4xl" aria-hidden="true"></i>
+                  <span className="sr-only">Preview image unavailable</span>
+                </div>
+              ) : (
+                <img
+                  src={item.thumbnail_url}
+                  alt=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                  onError={() => setThumbnailFailed(true)}
+                />
+              )}
+            </div>
           )}
 
           <TtsPlayer

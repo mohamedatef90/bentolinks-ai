@@ -2,14 +2,26 @@
 // Replaces the old hybrid localStorage/Supabase `db` object.
 
 import { supabase } from './supabase';
-import { ContentItem, Link, Category, Folder, SmartCollection, FilterState, RssSubscription, FeedCandidate, ApiKey } from '../types';
+import { ContentItem, Link, Category, Folder, SmartCollection, FilterState, RssSubscription, FeedCandidate, ApiKey, SaveDestination } from '../types';
 
 const ITEM_COLUMNS =
-  'id, url, title, description, summary, key_points, tags, topic, source_type, item_kind, status, saved_via, ' +
-  'site_name, thumbnail_url, favicon_url, is_pinned, is_starred, read_status, section, ' +
-  'published_at, created_at, item_folders(folder_id)';
+  'id, url, title, description, summary, key_points, tags, topic, content_type_label, source_type, item_kind, status, saved_via, ' +
+  'site_name, thumbnail_url, favicon_url, is_pinned, pin_position, is_starred, read_status, section, ' +
+  'published_at, created_at, raw_metadata, item_folders(folder_id, assignment_source)';
 
 const ITEM_COLUMNS_FULL = ITEM_COLUMNS + ', content_text';
+// The home cards do not consume reader metadata or key points.
+const HOME_COLUMNS = ITEM_COLUMNS.replace('key_points, ', '').replace('raw_metadata, ', '');
+const ITEM_PAGE_SIZE = 1000;
+
+export interface HomeStats {
+  total: number;
+  unread: number;
+  thisWeek: number;
+  library: number;
+  feeds: number;
+  processing: number;
+}
 
 export interface SaveItemResult {
   id: string;
@@ -32,6 +44,7 @@ export function toLink(item: ContentItem): Link {
     section: item.section || undefined,
     createdAt: Date.parse(item.created_at),
     isPinned: item.is_pinned,
+    pinPosition: item.pin_position,
     isStarred: item.is_starred,
     readStatus: item.read_status,
     status: item.status,
@@ -63,14 +76,70 @@ async function invokeFn<T>(name: string, body: Record<string, unknown>): Promise
 
 export const api = {
   items: {
-    async fetchAll(): Promise<ContentItem[]> {
-      const { data, error } = await supabase
-        .from('content_items')
-        .select(ITEM_COLUMNS)
+    /** Keyword search stays fast and covers the archive beyond the home preview. */
+    async searchHome(q: string): Promise<ContentItem[]> {
+      const { data, error } = await supabase.from('content_items')
+        .select(HOME_COLUMNS)
+        .textSearch('search_tsv', q, { type: 'websearch', config: 'simple' })
         .order('created_at', { ascending: false })
-        .limit(2000);
-      if (error) throw new Error(`Failed to load items: ${error.message}`);
+        .limit(100);
+      if (error) throw new Error(`Search failed: ${error.message}`);
       return (data ?? []) as unknown as ContentItem[];
+    },
+
+    /** Load the daily briefing, without downloading the whole archive. */
+    async fetchHome(): Promise<{ items: ContentItem[]; stats: HomeStats }> {
+      const rows = () => supabase.from('content_items').select(HOME_COLUMNS)
+        .order('created_at', { ascending: false }).order('id', { ascending: false });
+      const count = () => supabase.from('content_items').select('id', { count: 'exact', head: true });
+      const processing = ['pending', 'parsing', 'enriching'];
+      const results = await Promise.all([
+        rows().eq('item_kind', 'bookmark').not('saved_via', 'in', '(mobile,extension)').limit(12),
+        rows().eq('item_kind', 'content').limit(6),
+        rows().eq('item_kind', 'content').eq('read_status', 'reading')
+          .not('saved_via', 'in', '(mobile,extension)').limit(6),
+        rows().in('saved_via', ['mobile', 'extension']).limit(8),
+        rows().eq('source_type', 'rss').limit(8),
+        rows().eq('is_pinned', true).limit(1000),
+        rows().in('status', processing).limit(50),
+        count().eq('item_kind', 'bookmark'),
+        count().eq('item_kind', 'bookmark').eq('read_status', 'unread'),
+        count().eq('item_kind', 'bookmark').gte('created_at', new Date(Date.now() - 7 * 86_400_000).toISOString()),
+        count().eq('item_kind', 'content'),
+        count().eq('source_type', 'rss'),
+        count().in('status', processing),
+      ]);
+      const error = results.find(result => result.error)?.error;
+      if (error) throw new Error(`Failed to load home: ${error.message}`);
+      const byId = new Map<string, ContentItem>();
+      for (const result of results.slice(0, 7)) {
+        for (const item of (result.data ?? []) as unknown as ContentItem[]) byId.set(item.id, item);
+      }
+      return {
+        items: [...byId.values()].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id.localeCompare(a.id)),
+        stats: {
+          total: results[7].count ?? 0, unread: results[8].count ?? 0,
+          thisWeek: results[9].count ?? 0, library: results[10].count ?? 0,
+          feeds: results[11].count ?? 0, processing: results[12].count ?? 0,
+        },
+      };
+    },
+
+    async fetchAll(): Promise<ContentItem[]> {
+      const items: ContentItem[] = [];
+      for (let from = 0; ; from += ITEM_PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from('content_items')
+          .select(ITEM_COLUMNS)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + ITEM_PAGE_SIZE - 1);
+        if (error) throw new Error(`Failed to load items: ${error.message}`);
+        const page = (data ?? []) as unknown as ContentItem[];
+        items.push(...page);
+        if (page.length < ITEM_PAGE_SIZE) break;
+      }
+      return items;
     },
 
     async fetchOne(id: string): Promise<ContentItem | null> {
@@ -89,43 +158,82 @@ export const api = {
       const columns = filter.system === 'resurface'
         ? ITEM_COLUMNS + ', daily_picks!inner(item_id)'
         : ITEM_COLUMNS;
-      let query = supabase.from('content_items').select(columns);
-      if (filter.kind) query = query.eq('item_kind', filter.kind);
-      if (filter.source_type?.length) query = query.in('source_type', filter.source_type);
-      if (filter.saved_via?.length) query = query.in('saved_via', filter.saved_via);
-      // Bookmarks view excludes phone/extension saves (they have the Mobile tab).
-      // `.or` keeps rows with a null saved_via (PostgREST .neq would drop nulls).
-      else if (filter.kind === 'bookmark') query = query.or('saved_via.is.null,saved_via.neq.mobile');
-      if (filter.read_status?.length) query = query.in('read_status', filter.read_status);
-      if (filter.topic) query = query.eq('topic', filter.topic);
-      if (filter.is_starred) query = query.eq('is_starred', true);
-      if (filter.tags?.length) query = query.overlaps('tags', filter.tags);
-
       const [sortCol, sortDir] = filter.sort === 'title_asc'
         ? ['title', true] as const
         : filter.sort === 'date_asc'
           ? ['created_at', true] as const
           : ['created_at', false] as const;
-      query = query.order(sortCol, { ascending: sortDir }).limit(500);
-
-      const { data, error } = await query;
-      if (error) throw new Error(`Failed to load items: ${error.message}`);
-      return (data ?? []) as unknown as ContentItem[];
+      const items: ContentItem[] = [];
+      for (let from = 0; ; from += ITEM_PAGE_SIZE) {
+        let query = supabase.from('content_items').select(columns);
+        if (filter.kind) query = query.eq('item_kind', filter.kind);
+        if (filter.source_type?.length) query = query.in('source_type', filter.source_type);
+        if (filter.saved_via?.length) query = query.in('saved_via', filter.saved_via);
+        if (filter.read_status?.length) query = query.in('read_status', filter.read_status);
+        if (filter.topic) query = query.eq('topic', filter.topic);
+        if (filter.is_starred) query = query.eq('is_starred', true);
+        if (filter.tags?.length) query = query.overlaps('tags', filter.tags);
+        const { data, error } = await query
+          .order(sortCol, { ascending: sortDir })
+          .order('id', { ascending: sortDir })
+          .range(from, from + ITEM_PAGE_SIZE - 1);
+        if (error) throw new Error(`Failed to load items: ${error.message}`);
+        const page = (data ?? []) as unknown as ContentItem[];
+        items.push(...page);
+        if (page.length < ITEM_PAGE_SIZE) break;
+      }
+      return items;
     },
 
     async fetchByFolder(folderId: string): Promise<ContentItem[]> {
-      const { data, error } = await supabase
-        .from('content_items')
-        .select(ITEM_COLUMNS.replace(', item_folders(folder_id)', '') + ', item_folders!inner(folder_id)')
-        .eq('item_folders.folder_id', folderId)
-        .order('created_at', { ascending: false })
-        .limit(500);
-      if (error) throw new Error(`Failed to load folder items: ${error.message}`);
-      return (data ?? []) as unknown as ContentItem[];
+      const items: ContentItem[] = [];
+      for (let from = 0; ; from += ITEM_PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from('content_items')
+          .select(ITEM_COLUMNS.replace(', item_folders(folder_id, assignment_source)', '') + ', item_folders!inner(folder_id, assignment_source)')
+          .eq('item_folders.folder_id', folderId)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + ITEM_PAGE_SIZE - 1);
+        if (error) throw new Error(`Failed to load folder items: ${error.message}`);
+        const page = (data ?? []) as unknown as ContentItem[];
+        items.push(...page);
+        if (page.length < ITEM_PAGE_SIZE) break;
+      }
+      return items;
     },
 
-    /** Keyword search via the search_items RPC (Postgres FTS + ts_rank). */
+    /** Hybrid semantic + keyword search, with direct FTS as a resilient fallback. */
     async search(q: string, filters: FilterState = {}): Promise<ContentItem[]> {
+      try {
+        const hybrid = await invokeFn<{ results: Array<{ id: string }> }>('semantic-search', {
+          query: q,
+          limit: 50,
+        });
+        const ids = hybrid.results.map((row) => row.id);
+        if (ids.length) {
+          const { data, error } = await supabase
+            .from('content_items')
+            .select(ITEM_COLUMNS)
+            .in('id', ids);
+          if (error) throw error;
+          const byId = new Map(((data ?? []) as unknown as ContentItem[]).map((item) => [item.id, item]));
+          const ranked = ids.map((id) => byId.get(id)).filter((item): item is ContentItem => !!item);
+          // The edge function is deliberately filter-agnostic; preserve the
+          // Library facets locally over the small ranked candidate set.
+          return ranked.filter((item) =>
+            (!filters.kind || item.item_kind === filters.kind) &&
+            (!filters.source_type?.length || filters.source_type.includes(item.source_type)) &&
+            (!filters.saved_via?.length || filters.saved_via.includes(item.saved_via)) &&
+            (!filters.read_status?.length || filters.read_status.includes(item.read_status)) &&
+            (!filters.topic || item.topic === filters.topic) &&
+            (!filters.is_starred || item.is_starred) &&
+            (!filters.tags?.length || filters.tags.some((tag) => item.tags.includes(tag)))
+          );
+        }
+      } catch (error) {
+        console.warn('Hybrid search unavailable; using keyword search:', error);
+      }
       const { data, error } = await supabase.rpc('search_items', { q, filters });
       if (error) throw new Error(`Search failed: ${error.message}`);
       return (data ?? []) as unknown as ContentItem[];
@@ -141,10 +249,14 @@ export const api = {
       if (error) throw new Error(`Update failed: ${error.message}`);
     },
 
-    /** Save a URL through the save-item Edge Function (parse + AI enrich happen async). */
-    async save(url: string, folderId?: string): Promise<SaveItemResult> {
+    /**
+     * Save a manually added web URL as a bookmark by default. The backend still
+     * extracts metadata and an AI summary, but a website the user captures from
+     * the web belongs in Bookmarks unless they explicitly choose Reading.
+     */
+    async save(url: string, folderId?: string, destination: SaveDestination = 'auto'): Promise<SaveItemResult> {
       const { data, error } = await supabase.functions.invoke('save-item', {
-        body: { url, folder_id: folderId || undefined },
+        body: { url, folder_id: folderId || undefined, destination },
       });
       if (error) throw new Error(`Save failed: ${error.message}`);
       if (data?.error) throw new Error(data.message || data.error);
@@ -154,14 +266,14 @@ export const api = {
     /** Batch save (bookmark import). Max 100 URLs per call. */
     async saveBatch(urls: string[]): Promise<SaveItemResult[]> {
       const { data, error } = await supabase.functions.invoke('save-item', {
-        body: { urls },
+        body: { urls, destination: 'bookmark' },
       });
       if (error) throw new Error(`Import failed: ${error.message}`);
       return (data?.items ?? []) as SaveItemResult[];
     },
 
     async update(id: string, updates: Partial<Pick<ContentItem,
-      'title' | 'description' | 'is_pinned' | 'is_starred' | 'read_status' | 'tags' | 'section'>>) {
+      'title' | 'description' | 'is_pinned' | 'pin_position' | 'is_starred' | 'read_status' | 'tags' | 'section'>>) {
       const { error } = await supabase.from('content_items').update(updates).eq('id', id);
       if (error) throw new Error(`Update failed: ${error.message}`);
     },
@@ -192,20 +304,55 @@ export const api = {
       if (folderId) {
         const { error } = await supabase
           .from('item_folders')
-          .insert({ item_id: itemId, folder_id: folderId, user_id: user.id });
+          .insert({ item_id: itemId, folder_id: folderId, user_id: user.id, assignment_source: 'user' });
         if (error) throw new Error(error.message);
       }
     },
 
-    /** Subscribe to live status changes (pending -> parsing -> enriching -> ready). */
-    subscribeToChanges(onChange: (item: Partial<ContentItem> & { id: string }) => void) {
+    /** Persist Priority Vault order so every client sees the same arrangement. */
+    async setPinnedOrder(itemIds: string[]) {
+      const updates = itemIds.map((id, pin_position) =>
+        supabase.from('content_items').update({ is_pinned: true, pin_position }).eq('id', id)
+      );
+      const results = await Promise.all(updates);
+      const failure = results.find((result) => result.error)?.error;
+      if (failure) throw new Error(`Priority Vault update failed: ${failure.message}`);
+    },
+
+    /**
+     * Subscribe to every vault-item change, not only AI pipeline updates.
+     * A phone can create an item while the web vault is already open, so the
+     * web client must receive INSERT and DELETE events as well as UPDATE.
+     */
+    subscribeToChanges(
+      onChange: (
+        item: Partial<ContentItem> & { id: string },
+        eventType: 'INSERT' | 'UPDATE' | 'DELETE',
+      ) => void,
+    ) {
       const channel = supabase
         .channel('content-items-changes')
         .on(
           'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'content_items' },
-          (payload) => onChange(payload.new as Partial<ContentItem> & { id: string }),
+          { event: '*', schema: 'public', table: 'content_items' },
+          (payload) => {
+            const record = (payload.eventType === 'DELETE' ? payload.old : payload.new) as Partial<ContentItem> & { id: string };
+            onChange(record, payload.eventType as 'INSERT' | 'UPDATE' | 'DELETE');
+          },
         )
+        .subscribe();
+      return () => { supabase.removeChannel(channel); };
+    },
+
+    /** Changes to folders, assignments, feeds, and daily picks affect several
+     * derived screens, so the consumer performs one coalesced vault refresh. */
+    subscribeToStructureChanges(onChange: () => void) {
+      const channel = supabase
+        .channel('vault-structure-changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'folders' }, onChange)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'item_folders' }, onChange)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'rss_subscriptions' }, onChange)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_picks' }, onChange)
         .subscribe();
       return () => { supabase.removeChannel(channel); };
     },

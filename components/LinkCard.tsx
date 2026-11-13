@@ -59,7 +59,8 @@ const LinkCard: React.FC<LinkCardProps> = ({
   const readMeta = READ_META[link.readStatus ?? 'unread'];
   const isBookmark = link.kind === 'bookmark';
   const dateLabel = formatDate(link.createdAt);
-  const fromMobile = link.savedVia === 'mobile';
+  const fromMobile = link.savedVia === 'mobile' || link.savedVia === 'extension';
+  const opensInReader = !isBookmark || fromMobile;
 
   // Top-right type marker: book for readable content, bookmark for a plain link.
   const typeBadge = isBookmark
@@ -72,8 +73,8 @@ const LinkCard: React.FC<LinkCardProps> = ({
       ? { label: 'Read again', icon: 'fa-rotate-left' }
       : { label: 'Read', icon: 'fa-book-open' };
 
-  // Links saved from the phone (Linkat) open the in-app reader like content, so
-  // they get "read mode" too; other bookmarks open the source directly.
+  // Phone captures keep Qlip's reader for enriched content such as YouTube
+  // videos; plain bookmarks still open their source directly.
   const openCard = () => {
     if (isBookmark && !fromMobile) { window.open(link.url, '_blank', 'noopener,noreferrer'); return; }
     navigate(`/item/${link.id}`);
@@ -89,7 +90,7 @@ const LinkCard: React.FC<LinkCardProps> = ({
       tabIndex={0}
       onClick={openCard}
       onKeyDown={(e) => { if (e.key === 'Enter') openCard(); }}
-      title={isBookmark ? 'Open source link' : 'Open in reader'}
+      title={opensInReader ? 'Open in reader' : 'Open source link'}
       className="bento-card spot group relative p-5 transition-all duration-300 hover:border-white/10 flex flex-col h-full shadow-lg cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A8CF38]/60"
       onMouseMove={spotlight}
     >
@@ -104,8 +105,14 @@ const LinkCard: React.FC<LinkCardProps> = ({
             <img
               src={thumb || link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`}
               alt=""
+              loading="lazy"
+              referrerPolicy="no-referrer"
               className={thumb ? 'w-full h-full object-cover' : 'w-7 h-7 object-contain'}
-              onError={(e) => (e.currentTarget.src = `https://ui-avatars.com/api/?name=${link.title}&background=0D1B2B&color=fff`)}
+              onError={(e) => {
+                const fallback = link.favicon || `https://www.google.com/s2/favicons?sz=64&domain=${link.url}`;
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = fallback;
+              }}
             />
           </div>
           <div className="flex-1 min-w-0">
@@ -246,7 +253,7 @@ const LinkCard: React.FC<LinkCardProps> = ({
               <i className={`fa-${link.isStarred ? 'solid' : 'regular'} fa-star text-xs`}></i>
             </button>
           )}
-          {isBookmark ? (
+          {!opensInReader ? (
             <a
               href={link.url}
               target="_blank"
